@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BDA GOL</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar"><div class="brand"><a class="brand-mark" href="{{ url_for('index') }}" title="Página inicial" aria-label="Página inicial"><svg class="report-icon-svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="18" x2="8" y2="14"/><line x1="12" y1="18" x2="12" y2="11"/><line x1="16" y1="18" x2="16" y2="16"/></svg></a><div class="brand-copy"><h1>BDA GOL</h1><p>Formatação e análise de share</p></div><a class="home-link" href="{{ url_for('index') }}">Programas</a></div></header>
+<main class="container">
+{% for message in get_flashed_messages() %}<div class="alert" role="alert">{{ message }}</div>{% endfor %}
+{% if step == 1 %}
+<section class="card"><div class="step-title"><span>1</span><div><h2>Formatar a base GOL</h2><p>Envie a base original. O final 255 será identificado na coluna IATA_AGENCIA.</p></div></div>
+<form class="upload-form" action="{{ url_for('gol_formatar') }}" method="post" enctype="multipart/form-data">
+  <label>Base original GOL (CSV ou XLSX)<input name="arquivo" type="file" accept=".csv,.xlsx" required></label>
+  <label>IATAs CORP considerados — edite, exclua ou adicione números separados por vírgula<textarea name="corp_iatas" rows="4">{{ corp_text }}</textarea></label>
+  <p class="filter-help">IATA_AGENCIA permanece numérico. Somente vendas GOL em ART/MAX cujo IATA não termina em 255 recebem BASE_VENDA CGB, CONSOLIDADA 1 = 43 e CONSOLIDADA 2 = ARARAUNA TURISMO. As demais vendas preservam sua base.</p>
+  <button class="btn primary" type="submit">Formatar base</button>
+</form></section>
+{% endif %}
+{% if step == 2 %}
+<section class="card"><div class="step-title"><span>2</span><div><h2>Formatação concluída</h2><p>Agora decida se vai juntar outro período e analisar ADVP.</p></div></div>
+<div class="stage-summary"><div>Original: {{ stats.original_rows }} linhas</div><div>Formatadas: {{ stats.formatted_rows }}</div><div>Excluídas: {{ stats.excluded_rows }}</div><div>GOL em ART/MAX: {{ stats.gol_artmax_rows }}</div><div>GOL em ART/MAX com IATA final 255: {{ stats.gol_artmax_iata_255_rows }}</div><div>Redirecionadas para CGB: {{ stats.cgb_rows }}</div><div>ART/MAX no original: {{ stats.artmax_rows }}</div></div>
+<form class="upload-form" action="{{ url_for('gol_relatorios', job_id=job_id) }}" method="post" enctype="multipart/form-data">
+  <label>Quer inserir a base dos demais períodos? Envie aqui o arquivo (opcional). O sistema verificará se já está formatado.<input name="complementar" type="file" accept=".csv,.xlsx"></label>
+  <label>Origem das datas (opcional): se a base complementar não tiver DATA_EMISSAO, envie o CSV original com essa coluna. O sistema confere cada venda antes de recuperar a data.<input name="origem_datas" type="file" accept=".csv,.xlsx"></label>
+  <label>Quer analisar por ADVP? <select name="use_advp"><option value="N">Não</option><option value="S">Sim</option></select></label>
+  <p class="filter-help">ADVP = DATA_EMBARQUE − DATA_EMISSAO, em dias.</p>
+  <label>Se analisar por ADVP, a divisão vale para quais relatórios?
+    <select name="advp_scope"><option value="CONS" selected>Apenas CONS (mais comum)</option><option value="CORP">Apenas CORP</option><option value="GOV">Apenas GOV</option><option value="TODOS">Todos: CONS, CORP e GOV</option></select>
+  </label>
+  <div class="gol-fields"><label>ADVP curto — início<input type="number" name="short_start" value="0" min="0"></label><label>ADVP curto — fim<input type="number" name="short_end" value="27" min="0"></label></div>
+  <label>Adicionar ADVP intermediário? <select name="use_intermediate"><option value="N">Não</option><option value="S">Sim</option></select></label>
+  <div class="gol-fields"><label>Intermediário — início<input type="number" name="middle_start" value="28" min="0"></label><label>Intermediário — fim<input type="number" name="middle_end" value="40" min="0"></label></div>
+  <p class="filter-help">O ADVP longo começa após o curto ou após o intermediário, se usado.</p>
+  <button class="btn primary" type="submit">Mostrar relatórios</button>
+</form></section>
+{% endif %}
+{% if step >= 3 %}
+{% if step == 3 %}
+<section class="card"><div class="step-title"><span>3</span><div><h2>Filtros da análise</h2><p>Altere o universo dos relatórios e do ajuste de share.</p></div></div>
+{% if has_complement %}<p class="plain-guide">Base complementar: <strong>{{ complement_status }}</strong>. O relatório completo usa as duas bases.{% if complement_stats %} {{ complement_stats.formatted_rows }} linhas formatadas e {{ complement_stats.excluded_rows }} excluídas no tratamento.{% endif %}</p>{% else %}<p class="plain-guide">Somente a primeira base foi enviada. O relatório completo aparecerá quando você inserir a base dos demais períodos.</p>{% endif %}
+<form action="{{ url_for('gol_filtros', job_id=job_id) }}" method="post" class="filter-shell">
+  <div class="filter-card">
+    <div class="filter-card-head"><h3>CUPOM</h3></div>
+    <details class="filter-dropdown"><summary>Selecionar cupons</summary><div class="dropdown-panel"><div class="option-list compact">{% for item in filter_options.cupons %}<label class="check-option"><input type="checkbox" name="cupons" value="{{ item }}" {% if item in current_filters.cupons %}checked{% endif %}>{{ item }}</label>{% endfor %}</div></div></details>
+    <p class="filter-help">Padrão: CUPOM 1</p>
+  </div>
+  <div class="filter-card">
+    <div class="filter-card-head"><h3>TIPO</h3></div>
+    <details class="filter-dropdown"><summary>Selecionar tipos</summary><div class="dropdown-panel"><div class="option-list compact">{% for item in filter_options.tipos %}<label class="check-option"><input type="checkbox" name="tipos" value="{{ item }}" {% if item in current_filters.tipos %}checked{% endif %}>{{ item }}</label>{% endfor %}</div></div></details>
+    <p class="filter-help">Padrão: TIPO N</p>
+  </div>
+  {% for kind in ['CONS','CORP','GOV'] %}
+  <div class="filter-card filter-card-wide">
+    <div class="filter-card-head"><h3>BASE - {{ kind }}</h3></div>
+    <details class="filter-dropdown">
+      <summary>Selecionar bases de {{ kind }}</summary>
+      <div class="dropdown-panel">
+        <input class="option-search" type="search" placeholder="Buscar base" oninput="golSearch(this)">
+        <div class="option-list">{% for item in filter_options.bases[kind] %}<label class="check-option"><input type="checkbox" name="bases_{{ kind }}" value="{{ item }}" {% if item in current_filters.bases[kind] %}checked{% endif %}>{{ item }}</label>{% endfor %}</div>
+      </div>
+    </details>
+    <p class="filter-help">{% if kind == 'CONS' %}<strong>CONS (Consolidação):</strong> Exclui bases ART, MAX, <code>-CORP</code> e <code>-GOV</code>.{% elif kind == 'CORP' %}<strong>CORP (Corporativo):</strong> Apenas bases com sufixo <code>-CORP</code> (IATAs CORP).{% else %}<strong>GOV (Governo):</strong> Apenas bases com sufixo <code>-GOV</code> (vendas Governo).{% endif %}</p>
+  </div>
+  {% endfor %}
+  <div class="filter-card date-filter">
+    <div class="filter-card-head"><h3>DATA_EMISSAO</h3></div>
+    <div class="gol-date-inputs"><label>Início<input type="date" name="date_start" value="{{ current_filters.date_start }}"></label><label>Fim<input type="date" name="date_end" value="{{ current_filters.date_end }}"></label></div>
+    <p class="filter-help">Período considerado</p>
+  </div>
+  <div class="filter-submit">
+    <div class="filter-legend-box">
+      <div class="filter-legend-title">Descrição dos filtros por tipo de relatório:</div>
+      <div class="filter-legend-items">
+        <div class="filter-legend-item"><span class="legend-tag tag-cons">CONS</span><strong>Consolidação Geral:</strong> Considera bases normais, excluindo ART, MAX, bases <code>-CORP</code> e <code>-GOV</code>.</div>
+        <div class="filter-legend-item"><span class="legend-tag tag-corp">CORP</span><strong>Corporativo:</strong> Considera exclusivamente bases com sufixo <code>-CORP</code> (identificadas pelos IATAs corporativos).</div>
+        <div class="filter-legend-item"><span class="legend-tag tag-gov">GOV</span><strong>Governo:</strong> Considera exclusivamente bases com sufixo <code>-GOV</code> (vendas marcadas como Governo).</div>
+      </div>
+      <span class="filter-legend-note">Padrão aplicado: CUPOM 1, TIPO N, sem WHITE LABEL e todas as datas disponíveis.</span>
+    </div>
+    <button class="btn primary" type="submit">Aplicar filtros</button>
+  </div>
+</form></section>
+<script>function golSearch(input){const query=input.value.toLocaleLowerCase('pt-BR');input.closest('.dropdown-panel').querySelectorAll('.check-option').forEach(label=>{label.style.display=label.textContent.toLocaleLowerCase('pt-BR').includes(query)?'':'none'})}</script>
+{% endif %}
+{% for period, title in titles.items() %}
+<section class="card"><div class="step-title"><span>4</span><div><h2>{{ title }}</h2><p>{{ 'Após o ajuste. ' if step == 4 else '' }}Share por VALOR_BRL; CUPOM {{ current_filters.cupons|join(', ') }}, TIPO {{ current_filters.tipos|join(', ') }} e DATA_EMISSAO selecionada.</p></div></div>
+{% for table in layouts[period] %}
+<h3 class="gol-report-title">{{ table.title }}</h3>
+<div class="table-wrap gol-pivot-wrap"><table class="gol-pivot"><thead><tr><th class="gol-cia-head" rowspan="2">CIA_BILHETE</th>{% for band in table.bands %}<th colspan="2" class="gol-band gol-band-{{ band.kind|lower }}">{{ band.label }}</th>{% endfor %}</tr>
+<tr>{% for band in table.bands %}<th>TARIFA</th><th>SHARE</th>{% endfor %}</tr></thead><tbody>
+{% for row in table.rows %}<tr class="{{ 'gol-total' if row.cia == 'Total geral' else '' }}"><th scope="row">{{ row.cia }}</th>{% for cell in row.cells %}<td class="gol-money">{{ cell.value|brl }}</td><td class="gol-percent">{{ '%.2f'|format(cell.share * 100)|replace('.', ',') }}%</td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>
+{% endfor %}
+<p class="filter-help">CONS exclui ART, MAX, -CORP e -GOV. CORP usa -CORP. GOV usa -GOV.{% if period == 'COMPLETO' %} Este período inclui a base complementar.{% endif %}</p></section>
+{% endfor %}
+{% endif %}
+{% if step == 4 and daily_tables %}
+<section class="card">
+  <div class="step-title">
+    <span>📅</span>
+    <div>
+      <h2>Relatório Dia a Dia — Comparativo Antes × Depois e Diferença</h2>
+      <p>Comparação diária de cada tipo de relatório (CONS, CORP, GOV) e faixas ADVP mostrando Share Original, Share Atual e a Diferença (pp).</p>
+    </div>
+  </div>
+  {% for table in daily_tables %}
+  <h3 class="gol-report-title">{{ table.title }}</h3>
+  <div class="table-wrap gol-pivot-wrap">
+    <table class="gol-pivot gol-daily-pivot">
+      <thead>
+        <tr>
+          <th rowspan="2" class="gol-day-head">DATA</th>
+          <th colspan="3" class="gol-band gol-band-corp">LATAM (JJ)</th>
+          <th colspan="3" class="gol-band gol-band-cons">GOL (G3)</th>
+          <th colspan="3" class="gol-band gol-band-gov">AZUL (AD)</th>
+          <th colspan="3" class="gol-band gol-band-total">TOTAL GERAL</th>
+        </tr>
+        <tr>
+          <th>SHARE ORIG.</th><th>SHARE ATUAL</th><th>DIF. (pp)</th>
+          <th>SHARE ORIG.</th><th>SHARE ATUAL</th><th>DIF. (pp)</th>
+          <th>SHARE ORIG.</th><th>SHARE ATUAL</th><th>DIF. (pp)</th>
+          <th>TARIFA ORIG.</th><th>TARIFA ATUAL</th><th>DIF. (R$)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr class="{{ 'gol-total' if row.is_total else '' }}">
+          <th scope="row">{{ row.date_label }}</th>
+          <td class="gol-percent">{{ '%.2f'|format(row.jj.orig_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent">{{ '%.2f'|format(row.jj.curr_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent {{ 'gol-diff-pos' if row.jj.diff_pp > 0 else 'gol-diff-neg' if row.jj.diff_pp < 0 else '' }}">{{ '%+.2f'|format(row.jj.diff_pp)|replace('.', ',') }} pp</td>
+          <td class="gol-percent">{{ '%.2f'|format(row.g3.orig_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent">{{ '%.2f'|format(row.g3.curr_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent {{ 'gol-diff-pos' if row.g3.diff_pp > 0 else 'gol-diff-neg' if row.g3.diff_pp < 0 else '' }}">{{ '%+.2f'|format(row.g3.diff_pp)|replace('.', ',') }} pp</td>
+          <td class="gol-percent">{{ '%.2f'|format(row.ad.orig_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent">{{ '%.2f'|format(row.ad.curr_share * 100)|replace('.', ',') }}%</td>
+          <td class="gol-percent {{ 'gol-diff-pos' if row.ad.diff_pp > 0 else 'gol-diff-neg' if row.ad.diff_pp < 0 else '' }}">{{ '%+.2f'|format(row.ad.diff_pp)|replace('.', ',') }} pp</td>
+          <td class="gol-money">{{ row.total.orig_val|brl }}</td>
+          <td class="gol-money">{{ row.total.curr_val|brl }}</td>
+          <td class="gol-money {{ 'gol-diff-neg' if row.total.diff_val < 0 else 'gol-diff-pos' if row.total.diff_val > 0 else '' }}">{{ row.total.diff_val|brl }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% if step == 3 %}
+<section class="card"><div class="step-title"><span>4</span><div><h2>Definir o share</h2><p>Preencha apenas as metas necessárias, por tipo de relatório.</p></div></div>
+<form class="upload-form" action="{{ url_for('gol_exportar', job_id=job_id) }}" method="post">
+<p><strong>Semana de ajuste:</strong> {{ week|join(', ') }}. O ajuste pode excluir apenas vendas LATAM e AZUL dessa semana. Confirme os dias e marque os que devem ser pulados.</p>
+<fieldset><legend>Quer pular algum dia da semana?</legend>{% for day in week %}<label class="gol-day"><input type="checkbox" name="skip_days" value="{{ day }}">{{ day }}</label>{% endfor %}</fieldset>
+{% for kind in ['CONS','CORP','GOV'] %}<fieldset><legend>RELATÓRIO {{ kind }}</legend><div class="gol-fields">
+  {% if has_complement %}<label>Share GOL no completo (%)<input name="{{ kind }}_general" type="text" inputmode="decimal" placeholder="Ex.: 25,00"></label>{% endif %}
+  <label>Share GOL na semana (%)<input name="{{ kind }}_week" type="text" inputmode="decimal" placeholder="Opcional"></label>
+  {% if kind in advp_kinds %}{% for name in groups %}<label>Share GOL no ADVP {{ name }} ({{ 'completo' if has_complement else 'semana' }}) (%)<input name="{{ kind }}_{{ name }}" type="text" inputmode="decimal" placeholder="Opcional"></label>{% endfor %}{% endif %}
+  </div></fieldset>{% endfor %}
+<p class="filter-help">O ajuste busca atingir as metas de share da GOL, preserva a LATAM em média com no mínimo 3 pontos percentuais à frente da GOL e limita a queda do share AZUL a 2 pontos percentuais. Se ao estipular o ADVP curto a meta do share geral não for alcançada, o ADVP longo também é ajustado.</p>
+<button class="btn primary" type="submit">Ajustar e gerar ZIP</button></form></section>
+{% endif %}
+{% if step == 4 %}<section class="card success-card"><h2>ZIP GOL pronto</h2><p>{{ result.removed }} linhas excluídas no ajuste. Base final com {{ result.final }} linhas.</p>
+<div class="filter-legend-box" style="margin: 14px 0;">
+  <div class="filter-legend-title">Arquivos incluídos no ZIP:</div>
+  <div class="filter-legend-items">
+    <div>📄 <strong>GOL PRINCIPAL.csv</strong> (e <strong>GOL FINAL.csv</strong>): Base ajustada do período atual (20 colunas modelo GOL).</div>
+    <div>📦 <strong>GOL BASE COMPLETA.csv</strong>: Base completa ajustada (demais períodos + período atual, 20 colunas modelo GOL).</div>
+    <div>📊 <strong>GOL_FORMATADO_COM_DINAMICA.xlsx</strong>: Relatórios dinâmicos originais, ajustados e aba DIA_A_DIA.</div>
+    <div>📅 <strong>GOL_COMPARATIVO_DIA_A_DIA.csv</strong>: Relatório comparativo diário antes, depois e diferença.</div>
+    <div>📑 <strong>GOL_RELATORIOS.pdf</strong>: Relatório com indicadores de tratamento, shares e comparativo diário.</div>
+  </div>
+</div>
+{% for warning in result.warnings %}<div class="alert">{{ warning }}</div>{% endfor %}<a class="btn primary" href="{{ url_for('gol_download', job_id=job_id) }}">Baixar {{ result.zip_name }}</a></section>{% endif %}
+</main></body></html>

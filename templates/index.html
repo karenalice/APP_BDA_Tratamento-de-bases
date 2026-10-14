@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tratamento BDA e Ajuste de Share</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <a class="brand-mark" href="{{ url_for('index') }}" title="Página inicial" aria-label="Voltar à página inicial"><svg class="report-icon-svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="18" x2="8" y2="14"/><line x1="12" y1="18" x2="12" y2="11"/><line x1="16" y1="18" x2="16" y2="16"/></svg></a>
+        <div class="brand-copy">
+            <h1>BDA LATAM</h1>
+            <p>Formatação, filtros, share e geração das bases finais</p>
+        </div>
+        <a class="home-link" href="{{ url_for('index') }}" aria-label="Voltar ao início"><span aria-hidden="true">←</span> Início</a>
+    </div>
+</header>
+
+<main class="container">
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for msg in messages %}
+                <div class="alert">{{ msg }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <section class="card upload-card">
+        <div class="step-title">
+            <span>1</span>
+            <div>
+                <h2>Enviar relatório</h2>
+                <p>Primeiro o sistema limpa e padroniza o arquivo; só depois calcula o share.</p>
+            </div>
+        </div>
+        <form action="{{ url_for('analisar') }}" method="post" enctype="multipart/form-data" class="upload-form">
+            <label class="file-box">
+                <input type="file" name="arquivo" accept=".csv" required>
+                <strong>Selecionar arquivo CSV</strong>
+                <small>Relatório BDA original</small>
+            </label>
+            <button class="btn primary" type="submit">Carregar e formatar</button>
+        </form>
+    </section>
+
+    {% if preview %}
+    <section class="card">
+        <div class="step-title">
+            <span>2</span>
+            <div>
+                <h2>Filtros da análise</h2>
+                <p>Escolha exatamente o universo que será usado para calcular e ajustar o share.</p>
+            </div>
+        </div>
+
+        <div class="filter-note">
+            <strong>Padrão inicial:</strong> CUPOM 1, TIPO N, WHITE LABEL fora do share e período completo.
+            Você pode alterar qualquer um deles antes de analisar.
+        </div>
+
+        <form action="{{ url_for('filtros', job_id=job_id) }}" method="post" class="filter-shell">
+            <div class="filter-card">
+                <div class="filter-card-head">
+                    <div>
+                        <span class="filter-kicker">Bilhete</span>
+                        <h3>CUPOM</h3>
+                    </div>
+                    <span class="count-badge" data-count-for="cupons">0 selecionados</span>
+                </div>
+                <details class="filter-dropdown">
+                    <summary><span class="filter-summary" data-summary-for="cupons">Selecionar cupons</span><span class="chevron" aria-hidden="true"></span></summary>
+                    <div class="dropdown-panel">
+                    <input class="option-search" type="search" placeholder="Buscar cupom..." aria-label="Buscar cupom" oninput="searchOptions(this,'cupons-options')">
+                    <div class="option-actions">
+                        <button type="button" onclick="setAll('cupons-options', true)">Todos</button>
+                        <button type="button" onclick="setAll('cupons-options', false)">Limpar</button>
+                    </div>
+                    <div class="option-list compact" id="cupons-options" data-group="cupons">
+                    {% for item in filter_options.cupons %}
+                    <label class="check-option">
+                        <input type="checkbox" name="cupons" value="{{ item }}" {% if item in current_filters.cupons %}checked{% endif %}>
+                        <span>{{ item }}</span>
+                    </label>
+                    {% endfor %}
+                    </div>
+                    </div>
+                </details>
+                <p class="filter-help">Define quais cupons entram no cálculo. A seleção padrão é apenas o cupom 1.</p>
+            </div>
+
+            <div class="filter-card">
+                <div class="filter-card-head">
+                    <div>
+                        <span class="filter-kicker">Venda</span>
+                        <h3>TIPO</h3>
+                    </div>
+                    <span class="count-badge" data-count-for="tipos">0 selecionados</span>
+                </div>
+                <details class="filter-dropdown">
+                    <summary><span class="filter-summary" data-summary-for="tipos">Selecionar tipos</span><span class="chevron" aria-hidden="true"></span></summary>
+                    <div class="dropdown-panel">
+                    <div class="option-actions">
+                        <button type="button" onclick="setAll('tipos-options', true)">Todos</button>
+                        <button type="button" onclick="setAll('tipos-options', false)">Limpar</button>
+                    </div>
+                    <div class="option-list compact" id="tipos-options" data-group="tipos">
+                    {% for item in filter_options.tipos %}
+                    <label class="check-option">
+                        <input type="checkbox" name="tipos" value="{{ item }}" {% if item in current_filters.tipos %}checked{% endif %}>
+                        <span>{{ item }}</span>
+                    </label>
+                    {% endfor %}
+                    </div>
+                    </div>
+                </details>
+                <p class="filter-help">Normalmente usamos N. Se marcar mais tipos, todos entram no universo do share.</p>
+            </div>
+
+            <div class="filter-card filter-card-wide">
+                <div class="filter-card-head">
+                    <div>
+                        <span class="filter-kicker">Cliente / grupo</span>
+                        <h3>CONSOLIDADA 2</h3>
+                    </div>
+                    <span class="count-badge" data-count-for="consolidadas">0 selecionadas</span>
+                </div>
+                <details class="filter-dropdown">
+                    <summary><span class="filter-summary" data-summary-for="consolidadas">Selecionar consolidadas</span><span class="chevron" aria-hidden="true"></span></summary>
+                    <div class="dropdown-panel">
+                    <input class="option-search" type="search" placeholder="Digite parte do nome..." aria-label="Buscar consolidada" oninput="searchOptions(this,'consolidadas-options')">
+                    <div class="option-actions">
+                        <button type="button" onclick="setAll('consolidadas-options', true)">Selecionar visíveis</button>
+                        <button type="button" onclick="setAll('consolidadas-options', false)">Limpar visíveis</button>
+                    </div>
+                    <div class="option-list" id="consolidadas-options" data-group="consolidadas">
+                    {% for item in filter_options.consolidadas %}
+                    <label class="check-option {% if item.strip().upper() == 'WHITE LABEL' %}white-label-option{% endif %}">
+                        <input type="checkbox" name="consolidadas" value="{{ item }}" {% if item in current_filters.consolidadas %}checked{% endif %}>
+                        <span>{{ item }}</span>
+                        {% if item.strip().upper() == 'WHITE LABEL' %}<em>normalmente fora</em>{% endif %}
+                    </label>
+                    {% endfor %}
+                    </div>
+                    </div>
+                </details>
+                <p class="filter-help">Somente as consolidadas marcadas participam do cálculo. WHITE LABEL começa desmarcada.</p>
+            </div>
+
+            <div class="filter-card date-filter">
+                <div class="filter-card-head">
+                    <div>
+                        <span class="filter-kicker">Período</span>
+                        <h3>DATA_EMISSAO</h3>
+                    </div>
+                </div>
+                <details class="filter-dropdown">
+                    <summary><span class="filter-summary" id="date-summary">Selecionar período</span><span class="chevron" aria-hidden="true"></span></summary>
+                    <div class="dropdown-panel"><div class="date-grid">
+                    <label>
+                        <span>Início</span>
+                        <input type="date" name="date_start" value="{{ current_filters.date_start }}">
+                    </label>
+                    <span class="date-arrow">→</span>
+                    <label>
+                        <span>Fim</span>
+                        <input type="date" name="date_end" value="{{ current_filters.date_end }}">
+                    </label>
+                    </div></div>
+                </details>
+                <p class="filter-help">Apenas emissões dentro deste período serão consideradas no share e na escolha dos bilhetes.</p>
+            </div>
+
+            <div class="filter-submit">
+                <div>
+                    <strong>Pronto para recalcular?</strong>
+                    <span>O quadro de share e a tabela abaixo serão atualizados com estes filtros.</span>
+                    <span class="filter-error" id="filter-error" role="alert"></span>
+                </div>
+                <button class="btn primary" type="submit">Aplicar filtros e analisar share</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card">
+        <div class="step-title">
+            <span>3</span>
+            <div>
+                <h2>Share atual do relatório</h2>
+                <p>Calculado por valor BRL sobre a tabela filtrada.</p>
+            </div>
+        </div>
+
+        <div class="share-grid">
+            <div class="metric latam"><label>LATAM (JJ)</label><strong>{{ "%.2f"|format(preview.jj * 100) }}%</strong></div>
+            <div class="metric"><label>G3</label><strong>{{ "%.2f"|format(preview.g3 * 100) }}%</strong></div>
+            <div class="metric"><label>AD</label><strong>{{ "%.2f"|format(preview.ad * 100) }}%</strong></div>
+            <div class="metric total"><label>Total BRL</label><strong>R$ {{ "{:,.2f}".format(preview.total).replace(",", "X").replace(".", ",").replace("X", ".") }}</strong></div>
+        </div>
+
+        <div class="info-line">
+            <span><b>Período:</b> {{ preview.period_start }} a {{ preview.period_end }}</span>
+            <span><b>Linhas consideradas:</b> {{ preview.rows }}</span>
+            <span><b>Bilhetes únicos:</b> {{ preview.unique_tickets }}</span>
+        </div>
+
+        {% if stage1_stats %}
+        <div class="stage-summary">
+            <div><b>Original:</b> {{ stage1_stats.original_rows }} linhas / {{ stage1_stats.original_cols }} colunas</div>
+            <div><b>GOV removida:</b> {{ 'SIM' if stage1_stats.gov_removed else 'NÃO' }}</div>
+            <div><b>Após formatação:</b> {{ stage1_stats.formatted_rows }}</div>
+            <div><b>Excluídas na formatação:</b> {{ stage1_stats.excluded_format_rows }}</div>
+            <div><b>DATA_RESERVA preenchidas:</b> {{ stage1_stats.data_reserva_filled }}</div>
+            <div><b>WEST:</b> {{ stage1_stats.west_rows }}</div>
+            <div><b>Base principal:</b> {{ stage1_stats.main_rows }}</div>
+        </div>
+
+        <details class="audit-box">
+            <summary>Ver auditoria completa da formatação</summary>
+            <div class="audit-grid">
+                <div>
+                    <h4>Exclusões</h4>
+                    {% for motivo, qtd in stage1_stats.exclusion_counts.items() %}
+                    <p><b>{{ motivo }}:</b> {{ qtd }}</p>
+                    {% endfor %}
+                </div>
+                <div>
+                    <h4>Preenchimentos</h4>
+                    <p><b>DATA_RESERVA:</b> {{ stage1_stats.data_reserva_filled }}</p>
+                    <p><b>GRUPO_EMPRESA origem:</b> {{ stage1_stats.grupo_empresa_source or 'não encontrada' }}</p>
+                    <p><b>GRUPO_CONSOLIDADA atualizadas:</b> {{ stage1_stats.grupo_consolidada_updated }}</p>
+                </div>
+                <div>
+                    <h4>ART / MAX</h4>
+                    {% for item in stage1_stats.artmax_log %}
+                    <p><b>{{ item.base }}:</b> {{ item.regra }} — JJ: {{ item.jj }}, JJ final 2412: {{ item.jj_2412 }}, alterados: {{ item.alterados }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <div class="step-title">
+            <span>4</span>
+            <div>
+                <h2>Tabela considerada no share</h2>
+                <p>Exibindo até 300 registros após os filtros.</p>
+            </div>
+        </div>
+        <div class="table-toolbar">
+            <input id="tableSearch" type="text" placeholder="Pesquisar na tabela..." onkeyup="filterTable()">
+        </div>
+        <div class="table-wrap">
+            <table id="previewTable">
+                <thead><tr>{% for col in table_columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+                <tbody>
+                    {% for row in table_rows %}
+                    <tr>{% for col in table_columns %}<td>{{ row.get(col, "") }}</td>{% endfor %}</tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="notice">
+            <b>Importante:</b> os filtros definem quais linhas participam da análise. Quando o sistema escolher um bilhete AD/G3,
+            <b>todos os cupons desse bilhete serão retirados da base final</b>, inclusive cupons que não estavam visíveis no filtro.
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="step-title">
+            <span>5</span>
+            <div>
+                <h2>Regras para ajuste de share</h2>
+                <p>Cada pergunta abaixo possui uma explicação simples de como será usada pelo sistema.</p>
+            </div>
+        </div>
+
+        <div class="plain-guide">
+            <strong>Como pensar:</strong> você informa o resultado que deseja e quais limites o sistema deve respeitar.
+            Ele procura bilhetes AD/G3 para retirar, sempre excluindo o bilhete completo.
+        </div>
+
+        <form action="{{ url_for('processar', job_id=job_id) }}" method="post" class="rules-form">
+            <div class="question-block full">
+                <div class="question-number">1</div>
+                <div class="question-content">
+                    <label>Share LATAM desejado (%)</label>
+                    <p class="question-explain"><b>Em palavras simples:</b> é o percentual final que você quer para a LATAM. Se digitar o mesmo percentual que já existe, nenhum bilhete será retirado para ajuste. O sistema não aceita uma meta menor que o share atual.</p>
+                    <input type="text" name="target_share" value="{{ "%.2f"|format(preview.jj * 100)|replace('.', ',') }}" required>
+                </div>
+            </div>
+
+            <div class="question-block full">
+                <div class="question-number">2</div>
+                <div class="question-content">
+                    <label>Deseja declarar uma faixa de share para G3 e/ou AD?</label>
+                    <p class="question-explain"><b>Para que serve:</b> evita que o sistema retire bilhetes demais de uma companhia. Exemplo: G3 entre 26% e 28% significa que o algoritmo tentará manter o share final da G3 dentro desse intervalo.</p>
+                    <select name="use_company_bounds" id="use_company_bounds">
+                        <option value="N">Não, não preciso limitar G3/AD</option>
+                        <option value="S">Sim, quero definir limites</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="conditional company-bounds full">
+                <div class="mini-question">
+                    <label>G3 mínimo (%)</label>
+                    <small>Se chegar abaixo deste valor, a retirada de G3 passa a ser fortemente evitada.</small>
+                    <input type="text" name="g3_min" placeholder="Ex.: 26,00">
+                </div>
+                <div class="mini-question">
+                    <label>G3 máximo (%)</label>
+                    <small>Ajuda o sistema a saber a faixa desejada para a participação da G3.</small>
+                    <input type="text" name="g3_max" placeholder="Ex.: 28,00">
+                </div>
+                <div class="mini-question">
+                    <label>AD mínimo (%)</label>
+                    <small>Opcional. Impede que a AD seja reduzida além do percentual informado.</small>
+                    <input type="text" name="ad_min" placeholder="Opcional">
+                </div>
+                <div class="mini-question">
+                    <label>AD máximo (%)</label>
+                    <small>Opcional. Define o teto desejado para AD no resultado final.</small>
+                    <input type="text" name="ad_max" placeholder="Opcional">
+                </div>
+            </div>
+
+            <div class="question-block full">
+                <div class="question-number">3</div>
+                <div class="question-content">
+                    <label>Deseja controlar o share diário da LATAM?</label>
+                    <p class="question-explain"><b>Para que serve:</b> impede que o resultado geral seja alcançado concentrando quase todas as retiradas em um único dia. Isso mantém a curva diária mais equilibrada.</p>
+                    <select name="daily_control" id="daily_control">
+                        <option value="S">Sim, quero proteger o dia a dia</option>
+                        <option value="N">Não, considere apenas o resultado geral</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="conditional daily-fields active full">
+                <div class="mini-question">
+                    <label>A partir de qual share diário o dia deve ser preservado? (%)</label>
+                    <small>Ex.: 45%. Um dia que já esteja em 47% será tratado como um dia alto.</small>
+                    <input type="text" name="daily_preserve_from" value="45,00">
+                </div>
+                <div class="mini-question">
+                    <label>Se o dia já estiver acima desse valor, evitar alterações?</label>
+                    <small>Se escolher SIM, o algoritmo tenta não aumentar ainda mais dias que já começaram altos.</small>
+                    <select name="avoid_high_days">
+                        <option value="S">Sim, preserve esses dias</option>
+                        <option value="N">Não, pode usar esses dias normalmente</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="question-block full">
+                <div class="question-number">4</div>
+                <div class="question-content">
+                    <label>Deseja estipular diferença mínima LATAM x G3 nos trechos diretos?</label>
+                    <p class="question-explain"><b>Para que serve:</b> em rotas diretas, você pode pedir que a LATAM fique à frente da G3 por uma quantidade mínima de pontos percentuais. Ex.: +5 p.p.</p>
+                    <select name="use_route_gap" id="use_route_gap">
+                        <option value="N">Não, não usar essa regra</option>
+                        <option value="S">Sim, quero controlar a diferença</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="conditional route-fields full">
+                <div class="mini-question">
+                    <label>LATAM deve ficar quantos p.p. acima da G3?</label>
+                    <small>Ex.: 5,00 significa LATAM pelo menos 5 pontos percentuais acima da G3.</small>
+                    <input type="text" name="route_gap_pp" value="5,00">
+                </div>
+                <div class="mini-question">
+                    <label>IATAs prioritários já definidos</label>
+                    <small>Essas localidades recebem atenção especial na regra de trechos.</small>
+                    <div class="iata-chips"><span>GRU</span><span>POA</span><span>CGB</span><span>FOR</span><span>GIG</span></div>
+                </div>
+                <div class="mini-question full">
+                    <label>Deseja adicionar outros IATAs?</label>
+                    <small>Digite somente se houver outras localidades que também devam ter prioridade.</small>
+                    <input type="text" name="extra_iatas" placeholder="Ex.: BSB, REC, CNF">
+                </div>
+            </div>
+
+            <div class="question-block full">
+                <div class="question-number">5</div>
+                <div class="question-content">
+                    <label>Ordem de prioridade das regras</label>
+                    <p class="question-explain"><b>Por que existe:</b> às vezes não é matematicamente possível cumprir tudo ao mesmo tempo. A ordem diz o que o sistema deve proteger primeiro. Use os números 1,2,3,4 na ordem desejada.</p>
+                    <div class="priority-legend">
+                        <span><b>1</b> Meta LATAM</span>
+                        <span><b>2</b> Faixa G3/AD</span>
+                        <span><b>3</b> Share diário</span>
+                        <span><b>4</b> Trechos prioritários</span>
+                    </div>
+                    <input type="text" name="priority_order" value="1,2,3,4">
+                </div>
+            </div>
+
+            <button class="btn primary large" type="submit">Processar e gerar ZIP</button>
+        </form>
+    </section>
+    {% endif %}
+
+    {% if result %}
+    <section class="card success-card">
+        <div class="step-title">
+            <span>✓</span>
+            <div>
+                <h2>Processamento concluído</h2>
+                <p>O ZIP inclui, na pasta principal, o PDF e o TXT com o share atual e a auditoria completa da formatação.</p>
+            </div>
+        </div>
+        <div class="share-grid">
+            <div class="metric"><label>LATAM original</label><strong>{{ "%.2f"|format(result.original_share_jj * 100) }}%</strong></div>
+            <div class="metric highlight"><label>LATAM final</label><strong>{{ "%.2f"|format(result.final_share_jj * 100) }}%</strong></div>
+            <div class="metric"><label>G3 final</label><strong>{{ "%.2f"|format(result.final_share_g3 * 100) }}%</strong></div>
+            <div class="metric"><label>AD final</label><strong>{{ "%.2f"|format(result.final_share_ad * 100) }}%</strong></div>
+        </div>
+        <div class="result-list">
+            <div><b>Meta LATAM:</b> {{ "%.2f"|format(result.target_share * 100) }}%</div>
+            <div><b>Bilhetes retirados:</b> {{ result.removed_tickets }}</div>
+            <div><b>Linhas/cupons retirados:</b> {{ result.removed_rows }}</div>
+            <div><b>Valor físico retirado:</b> R$ {{ "{:,.2f}".format(result.removed_value_physical).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+        </div>
+        <a href="{{ url_for('download', job_id=job_id) }}" class="btn download">Baixar todos os arquivos (.zip)</a>
+    </section>
+    {% endif %}
+</main>
+
+<script>
+function searchOptions(input, listId) {
+    const q = input.value.trim().toLowerCase();
+    document.querySelectorAll(`#${listId} .check-option`).forEach(opt => {
+        opt.style.display = opt.innerText.toLowerCase().includes(q) ? "flex" : "none";
+    });
+}
+function setAll(listId, checked) {
+    document.querySelectorAll(`#${listId} .check-option`).forEach(opt => {
+        if (opt.style.display !== "none") {
+            const cb = opt.querySelector('input[type="checkbox"]');
+            cb.checked = checked;
+            cb.dispatchEvent(new Event("change"));
+        }
+    });
+}
+function updateCounts() {
+    document.querySelectorAll(".option-list[data-group]").forEach(list => {
+        const group = list.dataset.group;
+        const selected = [...list.querySelectorAll('input[type="checkbox"]:checked')];
+        const checked = selected.length;
+        const badge = document.querySelector(`[data-count-for="${group}"]`);
+        if (badge) badge.textContent = `${checked} selecionado${checked === 1 ? "" : "s"}`;
+        const summary = document.querySelector(`[data-summary-for="${group}"]`);
+        if (summary) {
+            const total = list.querySelectorAll('input[type="checkbox"]').length;
+            summary.textContent = checked === 0 ? "Nenhum selecionado" :
+                checked === total ? "Todos selecionados" :
+                checked === 1 ? selected[0].value : `${checked} selecionados`;
+        }
+    });
+}
+document.querySelectorAll('.option-list input[type="checkbox"]').forEach(cb => cb.addEventListener("change", updateCounts));
+updateCounts();
+function updateDateSummary() {
+    const start = document.querySelector('[name="date_start"]')?.value;
+    const end = document.querySelector('[name="date_end"]')?.value;
+    const summary = document.getElementById('date-summary');
+    if (summary) summary.textContent = start || end ? `${start || 'Início'} até ${end || 'Fim'}` : 'Período completo';
+}
+document.querySelectorAll('.date-grid input').forEach(input => input.addEventListener('change', updateDateSummary));
+updateDateSummary();
+document.querySelectorAll('.filter-dropdown').forEach(dropdown => {
+    dropdown.querySelector('summary').addEventListener('click', () => {
+        if (!dropdown.open) document.querySelectorAll('.filter-dropdown').forEach(other => {
+            if (other !== dropdown) other.open = false;
+        });
+    });
+});
+document.addEventListener('click', event => {
+    if (!event.target.closest('.filter-dropdown')) {
+        document.querySelectorAll('.filter-dropdown[open]').forEach(dropdown => dropdown.open = false);
+    }
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') document.querySelectorAll('.filter-dropdown[open]').forEach(dropdown => {
+        dropdown.open = false;
+        dropdown.querySelector('summary').focus();
+    });
+});
+const filterForm = document.querySelector('.filter-shell');
+if (filterForm) filterForm.addEventListener('submit', event => {
+    const empty = [...filterForm.querySelectorAll('.option-list[data-group]')].find(list =>
+        !list.querySelector('input[type="checkbox"]:checked'));
+    if (empty) {
+        event.preventDefault();
+        document.getElementById('filter-error').textContent = 'Selecione pelo menos uma opção em cada filtro.';
+        empty.closest('.filter-dropdown').open = true;
+        empty.closest('.filter-card').scrollIntoView({behavior: 'smooth', block: 'center'});
+        empty.querySelector('input[type="checkbox"]').focus();
+    } else document.getElementById('filter-error').textContent = '';
+});
+
+function toggle(selector, show) {
+    document.querySelectorAll(selector).forEach(el => el.classList.toggle("active", show));
+}
+const company = document.getElementById("use_company_bounds");
+if (company) {
+    const sync = () => toggle(".company-bounds", company.value === "S");
+    company.addEventListener("change", sync); sync();
+}
+const daily = document.getElementById("daily_control");
+if (daily) {
+    const sync = () => toggle(".daily-fields", daily.value === "S");
+    daily.addEventListener("change", sync); sync();
+}
+const route = document.getElementById("use_route_gap");
+if (route) {
+    const sync = () => toggle(".route-fields", route.value === "S");
+    route.addEventListener("change", sync); sync();
+}
+function filterTable() {
+    const input = document.getElementById("tableSearch");
+    const table = document.getElementById("previewTable");
+    if (!input || !table) return;
+    const q = input.value.toUpperCase();
+    [...table.tBodies[0].rows].forEach(row => {
+        row.style.display = row.innerText.toUpperCase().includes(q) ? "" : "none";
+    });
+}
+</script>
+</body>
+</html>

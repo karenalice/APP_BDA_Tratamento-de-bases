@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Runtime and temporary job data
+jobs/
+tmp/
+saida/
+BASE TESTE/
+*.pkl
+
+# Spreadsheets, exports, archives and personal images
+*.csv
+*.xlsx
+*.xls
+*.zip
+*.pdf
+WhatsApp Image*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
