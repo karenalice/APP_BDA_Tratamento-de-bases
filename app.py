@@ -9,6 +9,8 @@ import shutil
 import pandas as pd
 import re
 
+import zipfile
+
 from gol_processor import (
     read_table, format_gol, merge_period, prepare_complement, recover_emission_dates, week_dates,
     filter_options as gol_filter_options, default_filters as gol_default_filters,
@@ -25,6 +27,19 @@ from processor import (
     build_share_preview,
     run_share_adjustment,
     build_zip_outputs,
+)
+
+from share_reports import (
+    read_any_table,
+    normalize_base_for_share,
+    extract_filter_options as extract_share_filter_options,
+    default_filters_for_share,
+    filter_share_dataframe,
+    calculate_share_matrix_and_layout,
+    period_span_label as get_share_period_span,
+    write_adjusted_share_pdf,
+    write_adjusted_share_excel,
+    FOOTER_NOTE_DEFAULT,
 )
 
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -668,6 +683,250 @@ def download(job_id):
         return redirect(url_for("latam"))
 
     return send_file(candidates[-1], as_attachment=True)
+
+
+# ============================================================
+# GERADOR DE RELATÓRIO DE BASE JÁ AJUSTADA (LATAM E GOL)
+# ============================================================
+
+@app.route("/latam/relatorio-ajustado", methods=["GET"])
+def relatorio_ajustado_latam():
+    return render_template("relatorio_ajustado.html", program="latam", step=1)
+
+
+@app.route("/gol/relatorio-ajustado", methods=["GET"])
+def relatorio_ajustado_gol():
+    return render_template("relatorio_ajustado.html", program="gol", step=1)
+
+
+@app.route("/relatorio-ajustado/<program>/novo", methods=["GET"])
+def relatorio_ajustado_novo(program):
+    if program == "gol":
+        return redirect(url_for("relatorio_ajustado_gol"))
+    return redirect(url_for("relatorio_ajustado_latam"))
+
+
+@app.route("/relatorio-ajustado/<program>/processar", methods=["POST"])
+def relatorio_ajustado_processar(program):
+    file = request.files.get("arquivo")
+    if not file or not file.filename:
+        flash("Selecione um arquivo CSV ou XLSX válido.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    job_id = uuid.uuid4().hex
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = secure_filename(file.filename) or f"base_ajustada_{job_id}.csv"
+    saved_path = job_dir / filename
+    file.save(saved_path)
+
+    try:
+        df_raw = read_any_table(saved_path)
+        if df_raw.empty:
+            flash("O arquivo enviado está vazio.")
+            return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+        df_norm = normalize_base_for_share(df_raw)
+        with open(job_dir / "normalized_df.pkl", "wb") as f:
+            pickle.dump(df_norm, f)
+
+        # Configuração de ADVP para GOL
+        groups = {}
+        advp_kinds = []
+        advp_desc = None
+        if program == "gol":
+            use_advp = request.form.get("use_advp", "N")
+            if use_advp == "S":
+                advp_scope = request.form.get("advp_scope", "CONS")
+                short_start = int(request.form.get("short_start", 0) or 0)
+                short_end = int(request.form.get("short_end", 27) or 27)
+                use_intermediate = request.form.get("use_intermediate", "N")
+
+                groups = {f"{short_start} A {short_end} DIAS": (short_start, short_end)}
+                if use_intermediate == "S":
+                    m_start = int(request.form.get("middle_start", 28) or 28)
+                    m_end = int(request.form.get("middle_end", 40) or 40)
+                    groups[f"{m_start} A {m_end} DIAS"] = (m_start, m_end)
+                    groups[f"{m_end + 1} DIAS OU MAIS"] = (m_end + 1, None)
+                else:
+                    groups[f"{short_end + 1} DIAS OU MAIS"] = (short_end + 1, None)
+
+                advp_kinds = ["CONS", "CORP", "GOV"] if advp_scope == "TODOS" else [advp_scope]
+                advp_desc = f"ADVP ativado ({advp_scope})"
+
+        default_filters = default_filters_for_share(df_norm)
+
+        meta = {
+            "job_id": job_id,
+            "program": program,
+            "original_filename": filename,
+            "groups": groups,
+            "advp_kinds": list(advp_kinds),
+            "advp_desc": advp_desc,
+            "current_filters": default_filters,
+        }
+        (job_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        return redirect(url_for("relatorio_ajustado_visualizar", program=program, job_id=job_id))
+
+    except Exception as exc:
+        flash(f"Erro ao processar base: {exc}")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+
+@app.route("/relatorio-ajustado/<program>/<job_id>", methods=["GET", "POST"])
+def relatorio_ajustado_visualizar(program, job_id):
+    job_dir, meta = load_job(job_id)
+    if not job_dir:
+        flash("Sessão não encontrada ou expirada.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    pkl_path = job_dir / "normalized_df.pkl"
+    if not pkl_path.exists():
+        flash("Arquivo de dados não encontrado.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    with open(pkl_path, "rb") as f:
+        df_norm = pickle.load(f)
+
+    current_filters = meta.get("current_filters", {})
+    groups = meta.get("groups", {})
+    advp_kinds = set(meta.get("advp_kinds", []))
+    advp_desc = meta.get("advp_desc")
+
+    filter_options = extract_share_filter_options(df_norm)
+    tables = calculate_share_matrix_and_layout(df_norm, groups=groups, advp_kinds=advp_kinds, filters=current_filters)
+    period_title = get_share_period_span(df_norm, filters=current_filters)
+
+    filtered_data = filter_share_dataframe(df_norm, current_filters)
+    total_val = sum(t["summary_geral"]["total"] for t in tables if t.get("kind") == "CONS")
+    gap = next((t["summary_geral"]["gap_pp"] for t in tables if t.get("kind") == "CONS"), 0.0)
+
+    stats = {
+        "total_rows": len(filtered_data),
+        "total_tickets": int(filtered_data["BILHETE"].nunique()) if "BILHETE" in filtered_data else len(filtered_data),
+        "total_value": total_val,
+        "gap_pp": gap,
+    }
+
+    # Gera PDF e Excel sob demanda em disco
+    pdf_filename = f"{program.upper()}_RELATORIO_AJUSTADO.pdf"
+    excel_filename = f"{program.upper()}_RELATORIO_AJUSTADO.xlsx"
+
+    write_adjusted_share_pdf(
+        job_dir / pdf_filename,
+        program_name=f"BDA {program.upper()}",
+        tables=tables,
+        period_title=period_title,
+        filters_summary=current_filters,
+        stats_summary=stats,
+        footer_note=FOOTER_NOTE_DEFAULT,
+    )
+
+    write_adjusted_share_excel(
+        job_dir / excel_filename,
+        tables=tables,
+        period_title=period_title,
+        program_title=f"BDA {program.upper()} — RELATÓRIO DE SHARE AJUSTADO",
+        df_data=filtered_data,
+        footer_note=FOOTER_NOTE_DEFAULT,
+    )
+
+    return render_template(
+        "relatorio_ajustado.html",
+        program=program,
+        step=2,
+        job_id=job_id,
+        period_title=period_title,
+        stats=stats,
+        tables=tables,
+        filter_options=filter_options,
+        current_filters=current_filters,
+        advp_desc=advp_desc,
+        footer_note=FOOTER_NOTE_DEFAULT,
+    )
+
+
+@app.route("/relatorio-ajustado/<program>/filtrar/<job_id>", methods=["POST"])
+def relatorio_ajustado_filtrar(program, job_id):
+    job_dir, meta = load_job(job_id)
+    if not job_dir:
+        flash("Sessão não encontrada.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    new_filters = {
+        "cupons": request.form.getlist("cupons"),
+        "tipos": request.form.getlist("tipos"),
+        "bases": {
+            "CONS": request.form.getlist("bases_CONS"),
+            "CORP": request.form.getlist("bases_CORP"),
+            "GOV": request.form.getlist("bases_GOV"),
+        },
+        "date_start": request.form.get("date_start", ""),
+        "date_end": request.form.get("date_end", ""),
+    }
+    meta["current_filters"] = new_filters
+    (job_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return redirect(url_for("relatorio_ajustado_visualizar", program=program, job_id=job_id))
+
+
+@app.route("/relatorio-ajustado/<program>/pdf/<job_id>", methods=["GET", "POST"])
+def relatorio_ajustado_pdf(program, job_id):
+    job_dir, _ = load_job(job_id)
+    if not job_dir:
+        flash("Sessão não encontrada.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    pdf_path = job_dir / f"{program.upper()}_RELATORIO_AJUSTADO.pdf"
+    if not pdf_path.exists():
+        flash("Relatório PDF não encontrado.")
+        return redirect(url_for("relatorio_ajustado_visualizar", program=program, job_id=job_id))
+
+    return send_file(pdf_path, as_attachment=False, mimetype="application/pdf")
+
+
+@app.route("/relatorio-ajustado/<program>/excel/<job_id>", methods=["GET", "POST"])
+def relatorio_ajustado_excel(program, job_id):
+    job_dir, _ = load_job(job_id)
+    if not job_dir:
+        flash("Sessão não encontrada.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    excel_path = job_dir / f"{program.upper()}_RELATORIO_AJUSTADO.xlsx"
+    if not excel_path.exists():
+        flash("Planilha Excel não encontrada.")
+        return redirect(url_for("relatorio_ajustado_visualizar", program=program, job_id=job_id))
+
+    return send_file(excel_path, as_attachment=True, download_name=excel_path.name)
+
+
+@app.route("/relatorio-ajustado/<program>/zip/<job_id>", methods=["GET", "POST"])
+def relatorio_ajustado_zip(program, job_id):
+    job_dir, _ = load_job(job_id)
+    if not job_dir:
+        flash("Sessão não encontrada.")
+        return redirect(url_for(f"relatorio_ajustado_{program}"))
+
+    zip_path = job_dir / f"RELATORIO_{program.upper()}_AJUSTADO.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for fname in [f"{program.upper()}_RELATORIO_AJUSTADO.pdf", f"{program.upper()}_RELATORIO_AJUSTADO.xlsx"]:
+            fp = job_dir / fname
+            if fp.exists():
+                z.write(fp, fname)
+        # Salva também a base filtrada em CSV
+        pkl_path = job_dir / "normalized_df.pkl"
+        if pkl_path.exists():
+            with open(pkl_path, "rb") as f:
+                df = pickle.load(f)
+            meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+            filtered = filter_share_dataframe(df, meta.get("current_filters"))
+            csv_path = job_dir / f"{program.upper()}_BASE_FILTRADA.csv"
+            filtered.to_csv(csv_path, sep=";", index=False, encoding="utf-8-sig")
+            z.write(csv_path, csv_path.name)
+
+    return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
 
 
 if __name__ == "__main__":

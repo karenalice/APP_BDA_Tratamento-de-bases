@@ -8,6 +8,10 @@
 <header class="topbar"><div class="brand"><a class="brand-mark" href="{{ url_for('index') }}" title="Página inicial" aria-label="Página inicial"><svg class="report-icon-svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="18" x2="8" y2="14"/><line x1="12" y1="18" x2="12" y2="11"/><line x1="16" y1="18" x2="16" y2="16"/></svg></a><div class="brand-copy"><h1>BDA GOL</h1><p>Formatação e análise de share</p></div><a class="home-link" href="{{ url_for('index') }}">Programas</a></div></header>
 <main class="container">
 {% for message in get_flashed_messages() %}<div class="alert" role="alert">{{ message }}</div>{% endfor %}
+<div class="plain-guide" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
+  <span>Já possui a base GOL final e ajustada? Você pode gerar os relatórios em PDF e Excel diretamente (com ou sem ADVP).</span>
+  <a class="btn" style="padding: 8px 14px; font-size: 12px; background: #b25e00; color: #fff; text-decoration: none;" href="{{ url_for('relatorio_ajustado_gol') }}">Gerar Relatório de Base Ajustada →</a>
+</div>
 {% if step == 1 %}
 <section class="card"><div class="step-title"><span>1</span><div><h2>Formatar a base GOL</h2><p>Envie a base original. O final 255 será identificado na coluna IATA_AGENCIA.</p></div></div>
 <form class="upload-form" action="{{ url_for('gol_formatar') }}" method="post" enctype="multipart/form-data">

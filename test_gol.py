@@ -299,6 +299,96 @@ class GolFlowTests(unittest.TestCase):
         curto_after = next(r for r in after if r["kind"] == "CONS" and r["advp"] == "CURTO" and r["period"] == "SEMANA")
         self.assertGreaterEqual(curto_after["shares"]["JJ"], curto_after["shares"]["G3"] + 0.03 - 1e-7)
 
+    def test_share_reports_engine_and_export(self):
+        from share_reports import (
+            normalize_base_for_share,
+            calculate_share_matrix_and_layout,
+            write_adjusted_share_pdf,
+            write_adjusted_share_excel,
+            period_span_label,
+        )
+
+        sample = pd.DataFrame({
+            "COMPANHIA": ["JJ", "AD", "G3", "JJ", "AD", "G3"],
+            "TARIFA": ["2864138,75", "1728694,30", "1516547,91", "39413,27", "46140,53", "14658,37"],
+            "BASE": ["CGB", "CGB", "CGB", "CGB-CORP", "CGB-CORP", "CGB-CORP"],
+            "CUPOM": ["1"] * 6,
+            "TIPO": ["N"] * 6,
+            "DATA_EMISSAO": ["01/10/2026", "02/10/2026", "03/10/2026", "04/10/2026", "05/10/2026", "06/10/2026"],
+            "DATA_EMBARQUE": ["10/10/2026", "11/10/2026", "12/10/2026", "13/10/2026", "14/10/2026", "15/10/2026"],
+        })
+        normalized = normalize_base_for_share(sample)
+        self.assertIn("CIA_BILHETE", normalized.columns)
+        self.assertIn("VALOR_BRL", normalized.columns)
+        self.assertIn("BASE_VENDA", normalized.columns)
+
+        tables = calculate_share_matrix_and_layout(normalized)
+        self.assertEqual(len(tables), 3)  # CONS, CORP, GOV
+
+        cons_table = tables[0]
+        self.assertEqual(cons_table["title"], "RELATÓRIO CONS")
+        self.assertEqual(cons_table["rows"][0]["cia"], "JJ")  # Maior tarifa
+        self.assertEqual(cons_table["rows"][-1]["cia"], "Total geral")
+
+        corp_table = tables[1]
+        self.assertEqual(corp_table["title"], "RELATÓRIO CORP")
+        self.assertEqual(corp_table["rows"][0]["cia"], "AD")  # Maior no CORP
+
+        with TemporaryDirectory() as tmpdir:
+            pdf_p = Path(tmpdir) / "test.pdf"
+            xlsx_p = Path(tmpdir) / "test.xlsx"
+            span = period_span_label(normalized)
+            write_adjusted_share_pdf(pdf_p, "TEST LATAM", tables, span)
+            write_adjusted_share_excel(xlsx_p, tables, span)
+            self.assertTrue(pdf_p.exists() and pdf_p.stat().st_size > 0)
+            self.assertTrue(xlsx_p.exists() and xlsx_p.stat().st_size > 0)
+
+    def test_adjusted_reports_flask_routes(self):
+        from app import app
+        client = app.test_client()
+
+        # Telas iniciais
+        res_latam = client.get("/latam/relatorio-ajustado")
+        self.assertEqual(res_latam.status_code, 200)
+        self.assertIn("Carregar Base Já Ajustada".encode("utf-8"), res_latam.data)
+
+        res_gol = client.get("/gol/relatorio-ajustado")
+        self.assertEqual(res_gol.status_code, 200)
+        self.assertIn("Perguntas sobre ADVP".encode("utf-8"), res_gol.data)
+
+        # Upload de base LATAM
+        csv_content = (
+            "CIA_BILHETE;VALOR_BRL;BASE_VENDA;CUPOM;TIPO;DATA_EMISSAO\n"
+            "JJ;2864138,75;CGB;1;N;01/10/2026\n"
+            "AD;1728694,30;CGB;1;N;02/10/2026\n"
+            "G3;1516547,91;CGB;1;N;03/10/2026\n"
+        )
+        data = {
+            "arquivo": (io.BytesIO(csv_content.encode("utf-8")), "base_latam_final.csv"),
+        }
+        res_post = client.post("/relatorio-ajustado/latam/processar", data=data, content_type="multipart/form-data")
+        self.assertEqual(res_post.status_code, 302)
+        redirect_url = res_post.headers["Location"]
+        self.assertIn("/relatorio-ajustado/latam/", redirect_url)
+
+        # Visualização
+        res_view = client.get(redirect_url)
+        self.assertEqual(res_view.status_code, 200)
+        self.assertIn("RELATÓRIO CONS".encode("utf-8"), res_view.data)
+        self.assertIn("CONS ADVP GERAL".encode("utf-8"), res_view.data)
+
+        # Downloads
+        job_id = redirect_url.split("/")[-1]
+        res_pdf = client.get(f"/relatorio-ajustado/latam/pdf/{job_id}")
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertEqual(res_pdf.mimetype, "application/pdf")
+
+        res_xlsx = client.get(f"/relatorio-ajustado/latam/excel/{job_id}")
+        self.assertEqual(res_xlsx.status_code, 200)
+
+        res_zip = client.get(f"/relatorio-ajustado/latam/zip/{job_id}")
+        self.assertEqual(res_zip.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

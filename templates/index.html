@@ -27,6 +27,11 @@
         {% endif %}
     {% endwith %}
 
+    <div class="plain-guide" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <span>Já possui a base LATAM final e ajustada? Você pode gerar os relatórios em PDF e Excel diretamente.</span>
+        <a class="btn" style="padding: 8px 14px; font-size: 12px; background: var(--blue); color: #fff; text-decoration: none;" href="{{ url_for('relatorio_ajustado_latam') }}">Gerar Relatório de Base Ajustada →</a>
+    </div>
+
     <section class="card upload-card">
         <div class="step-title">
             <span>1</span>

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BDA {{ 'LATAM' if program == 'latam' else 'GOL' }} | Relatório de Base Ajustada</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .action-bar-card {
+      background: linear-gradient(135deg, #f8fbfe 0%, #eef6fc 100%);
+      border: 1px solid #cce3f5;
+    }
+    .action-buttons-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .btn-pdf {
+      background: #c92a2a;
+      color: #fff;
+    }
+    .btn-pdf:hover {
+      background: #a61e1e;
+    }
+    .btn-excel {
+      background: #1b7340;
+      color: #fff;
+    }
+    .btn-excel:hover {
+      background: #145931;
+    }
+    .advp-box {
+      border: 1px solid #d1e2f0;
+      background: #fdfefe;
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 10px;
+    }
+    .advp-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .tag-program {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .tag-latam {
+      background: #e8f4fc;
+      color: #0b78b7;
+    }
+    .tag-gol {
+      background: #fff4e5;
+      color: #b25e00;
+    }
+    .badge-advp {
+      background: #e6f6ed;
+      color: #147747;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <a class="brand-mark" href="{{ url_for('index') }}" title="Página inicial" aria-label="Página inicial">
+      <svg class="report-icon-svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="8" y1="18" x2="8" y2="14"/>
+        <line x1="12" y1="18" x2="12" y2="11"/>
+        <line x1="16" y1="18" x2="16" y2="16"/>
+      </svg>
+    </a>
+    <div class="brand-copy">
+      <h1>BDA {{ 'LATAM' if program == 'latam' else 'GOL' }}</h1>
+      <p>Gerador de Relatório de Base Ajustada (PDF e Excel)</p>
+    </div>
+    <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+      {% if program == 'latam' %}
+        <a class="home-link" href="{{ url_for('relatorio_ajustado_gol') }}">Relatório GOL →</a>
+      {% else %}
+        <a class="home-link" href="{{ url_for('relatorio_ajustado_latam') }}">Relatório LATAM →</a>
+      {% endif %}
+      <a class="home-link" href="{{ url_for('index') }}">Início</a>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  {% for message in get_flashed_messages() %}
+    <div class="alert" role="alert">{{ message }}</div>
+  {% endfor %}
+
+  {% if step == 1 %}
+  <section class="card">
+    <div class="step-title">
+      <span>1</span>
+      <div>
+        <span class="tag-program {{ 'tag-latam' if program == 'latam' else 'tag-gol' }}">{{ 'LATAM' if program == 'latam' else 'GOL' }}</span>
+        <h2>Carregar Base Já Ajustada</h2>
+        <p>Envie a base final ajustada (CSV ou XLSX) para gerar imediatamente o relatório de share em PDF e Excel.</p>
+      </div>
+    </div>
+
+    <form class="upload-form" action="{{ url_for('relatorio_ajustado_processar', program=program) }}" method="post" enctype="multipart/form-data">
+      <label class="file-box">
+        <input type="file" name="arquivo" accept=".csv,.xlsx,.xls" required>
+        <strong>Selecionar arquivo da base já ajustada</strong>
+        <small>Aceita CSV ou planilhas Excel (.xlsx)</small>
+      </label>
+
+      {% if program == 'gol' %}
+      <fieldset class="advp-box">
+        <legend><strong>Perguntas sobre ADVP (Antecedência de Compra)</strong></legend>
+        <p class="filter-help" style="margin-top:0;">ADVP = DATA_EMBARQUE − DATA_EMISSAO (em dias).</p>
+
+        <label style="margin-top: 10px; display: block; font-weight: 700;">
+          Deseja mostrar o relatório por faixas de ADVP?
+          <select name="use_advp" id="use_advp" onchange="toggleAdvp(this.value)">
+            <option value="N" selected>Não (mostrar apenas CONS, CORP e GOV em ADVP GERAL)</option>
+            <option value="S">Sim (dividir colunas em faixas de ADVP)</option>
+          </select>
+        </label>
+
+        <div id="advp_options" style="display: none; margin-top: 14px;">
+          <label style="display: block; font-weight: 700;">
+            Em quais relatórios deve aplicar o ADVP?
+            <select name="advp_scope">
+              <option value="CONS" selected>Apenas CONS (mais comum)</option>
+              <option value="CORP">Apenas CORP</option>
+              <option value="GOV">Apenas GOV</option>
+              <option value="TODOS">Todos: CONS, CORP e GOV</option>
+            </select>
+          </label>
+
+          <div class="advp-grid">
+            <label>ADVP curto — Início (dias)
+              <input type="number" name="short_start" value="0" min="0">
+            </label>
+            <label>ADVP curto — Fim (dias)
+              <input type="number" name="short_end" value="27" min="0">
+            </label>
+          </div>
+
+          <label style="margin-top: 12px; display: block; font-weight: 700;">
+            Adicionar faixa de ADVP intermediário?
+            <select name="use_intermediate" id="use_intermediate" onchange="toggleIntermediate(this.value)">
+              <option value="N" selected>Não</option>
+              <option value="S">Sim</option>
+            </select>
+          </label>
+
+          <div id="intermediate_fields" class="advp-grid" style="display: none;">
+            <label>Intermediário — Início (dias)
+              <input type="number" name="middle_start" value="28" min="0">
+            </label>
+            <label>Intermediário — Fim (dias)
+              <input type="number" name="middle_end" value="40" min="0">
+            </label>
+          </div>
+          <p class="filter-help">O ADVP longo começa automaticamente após o término do ADVP curto (ou intermediário, se ativo).</p>
+        </div>
+      </fieldset>
+      {% endif %}
+
+      <button class="btn primary" type="submit" id="btnUploadAjustado">Carregar e Gerar Relatórios</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if step == 2 %}
+  <!-- Card de Download e Resumo -->
+  <section class="card action-bar-card">
+    <div class="step-title">
+      <span>✓</span>
+      <div>
+        <span class="tag-program {{ 'tag-latam' if program == 'latam' else 'tag-gol' }}">{{ 'LATAM' if program == 'latam' else 'GOL' }}</span>
+        <h2>Relatório da Base Ajustada Pronto</h2>
+        <p><strong>Período apurado:</strong> {{ period_title }}{% if advp_desc %} | <span class="badge-advp">{{ advp_desc }}</span>{% endif %}</p>
+      </div>
+    </div>
+
+    <div class="stage-summary" style="margin-top: 0; padding-top: 0; border-top: none;">
+      <div><strong>Linhas na base:</strong> {{ stats.total_rows }}</div>
+      <div><strong>Bilhetes únicos:</strong> {{ stats.total_tickets }}</div>
+      <div><strong>Faturamento Total:</strong> {{ stats.total_value|brl }}</div>
+      {% if stats.gap_pp is defined %}
+      <div><strong>Diferença JJ × G3:</strong> {{ '%.2f'|format(stats.gap_pp)|replace('.', ',') }} pp</div>
+      {% endif %}
+    </div>
+
+    <div class="action-buttons-grid">
+      <a class="btn btn-pdf" href="{{ url_for('relatorio_ajustado_pdf', program=program, job_id=job_id) }}" target="_blank">
+        <svg style="margin-right:8px;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Baixar Relatório em PDF
+      </a>
+      <a class="btn btn-excel" href="{{ url_for('relatorio_ajustado_excel', program=program, job_id=job_id) }}">
+        <svg style="margin-right:8px;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+        Baixar Planilha Excel Dinâmica (.xlsx)
+      </a>
+      <a class="btn" style="background:#4a5568; color:#fff;" href="{{ url_for('relatorio_ajustado_zip', program=program, job_id=job_id) }}">
+        <svg style="margin-right:8px;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+        Baixar Pacote Completo (.zip)
+      </a>
+      <a class="btn" style="background:#fff; border:1px solid #cbd5e1; color:#334155;" href="{{ url_for('relatorio_ajustado_novo', program=program) }}">
+        Carregar Outro Arquivo
+      </a>
+    </div>
+  </section>
+
+  <!-- Card de Filtros -->
+  <section class="card">
+    <div class="step-title">
+      <span>⚙</span>
+      <div>
+        <h2>Filtros da Apuração</h2>
+        <p>Ajuste os filtros de cupom, tipo, bases e datas para recalcular o relatório instantaneamente.</p>
+      </div>
+    </div>
+
+    <form action="{{ url_for('relatorio_ajustado_filtrar', program=program, job_id=job_id) }}" method="post" class="filter-shell">
+      <div class="filter-card">
+        <div class="filter-card-head"><h3>CUPOM</h3></div>
+        <details class="filter-dropdown">
+          <summary>Selecionar cupons</summary>
+          <div class="dropdown-panel">
+            <div class="option-list compact">
+              {% for item in filter_options.cupons %}
+              <label class="check-option">
+                <input type="checkbox" name="cupons" value="{{ item }}" {% if item in current_filters.cupons %}checked{% endif %}>
+                <span>{{ item }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </details>
+        <p class="filter-help">Padrão: CUPOM 1</p>
+      </div>
+
+      <div class="filter-card">
+        <div class="filter-card-head"><h3>TIPO</h3></div>
+        <details class="filter-dropdown">
+          <summary>Selecionar tipos</summary>
+          <div class="dropdown-panel">
+            <div class="option-list compact">
+              {% for item in filter_options.tipos %}
+              <label class="check-option">
+                <input type="checkbox" name="tipos" value="{{ item }}" {% if item in current_filters.tipos %}checked{% endif %}>
+                <span>{{ item }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </details>
+        <p class="filter-help">Padrão: TIPO N</p>
+      </div>
+
+      {% for kind in ['CONS','CORP','GOV'] %}
+      <div class="filter-card filter-card-wide">
+        <div class="filter-card-head"><h3>BASE - {{ kind }}</h3></div>
+        <details class="filter-dropdown">
+          <summary>Selecionar bases {{ kind }}</summary>
+          <div class="dropdown-panel">
+            <input class="option-search" type="search" placeholder="Buscar base..." oninput="filterBaseSearch(this)">
+            <div class="option-list">
+              {% for item in filter_options.bases[kind] %}
+              <label class="check-option">
+                <input type="checkbox" name="bases_{{ kind }}" value="{{ item }}" {% if current_filters.bases is defined and item in current_filters.bases.get(kind, []) %}checked{% endif %}>
+                <span>{{ item }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </details>
+        <p class="filter-help">{% if kind == 'CONS' %}Exclui ART, MAX, -CORP e -GOV.{% elif kind == 'CORP' %}Apenas bases -CORP.{% else %}Apenas bases -GOV.{% endif %}</p>
+      </div>
+      {% endfor %}
+
+      <div class="filter-card date-filter">
+        <div class="filter-card-head"><h3>DATA_EMISSAO</h3></div>
+        <div class="gol-date-inputs">
+          <label>Início<input type="date" name="date_start" value="{{ current_filters.date_start }}"></label>
+          <label>Fim<input type="date" name="date_end" value="{{ current_filters.date_end }}"></label>
+        </div>
+        <p class="filter-help">Intervalo de emissão</p>
+      </div>
+
+      <div class="filter-submit">
+        <div>
+          <span>Padrão aplicado: CUPOM 1, TIPO N, sem WHITE LABEL e datas completas.</span>
+        </div>
+        <button class="btn primary" type="submit">Aplicar filtros</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Tabelas do Modelo Final (Modelo Exato da Imagem) -->
+  <section class="card">
+    <div class="step-title">
+      <span>📊</span>
+      <div>
+        <h2>Relatórios de Share (Modelo Final Consolidado)</h2>
+        <p>Valores em BRL e representatividade de cada companhia aérea, ordenados do maior para o menor share com Total geral na última linha.</p>
+      </div>
+    </div>
+
+    {% for table in tables %}
+      <h3 class="gol-report-title">{{ table.title }}</h3>
+      <div class="table-wrap gol-pivot-wrap">
+        <table class="gol-pivot">
+          <thead>
+            <tr>
+              <th class="gol-cia-head" rowspan="2">CIA_BILHETE</th>
+              {% for band in table.bands %}
+                <th colspan="2" class="gol-band gol-band-{{ band.kind|lower }}">{{ band.label }}</th>
+              {% endfor %}
+            </tr>
+            <tr>
+              {% for band in table.bands %}
+                <th>TARIFA</th>
+                <th>SHARE</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in table.rows %}
+              <tr class="{{ 'gol-total' if row.cia == 'Total geral' else '' }}">
+                <th scope="row">{{ row.cia }}</th>
+                {% for cell in row.cells %}
+                  <td class="gol-money">{{ cell.value|brl }}</td>
+                  <td class="gol-percent">{{ '%.2f'|format(cell.share * 100)|replace('.', ',') }}%</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+
+    <p class="filter-help" style="margin-top: 14px; font-weight: 500;">
+      {{ footer_note }}
+    </p>
+  </section>
+  {% endif %}
+</main>
+
+<script>
+function toggleAdvp(val) {
+  const el = document.getElementById('advp_options');
+  if (el) el.style.display = (val === 'S') ? 'block' : 'none';
+}
+function toggleIntermediate(val) {
+  const el = document.getElementById('intermediate_fields');
+  if (el) el.style.display = (val === 'S') ? 'grid' : 'none';
+}
+function filterBaseSearch(input) {
+  const q = input.value.toLocaleLowerCase('pt-BR');
+  input.closest('.dropdown-panel').querySelectorAll('.check-option').forEach(label => {
+    label.style.display = label.textContent.toLocaleLowerCase('pt-BR').includes(q) ? '' : 'none';
+  });
+}
+document.querySelectorAll('form').forEach(f => {
+  f.addEventListener('submit', () => {
+    const btn = f.querySelector('button[type="submit"]');
+    if (btn && !btn.dataset.submitted) {
+      btn.dataset.submitted = 'true';
+      btn.textContent = 'Processando relatório... Aguarde...';
+      btn.style.pointerEvents = 'none';
+      btn.style.opacity = '0.75';
+    }
+  });
+});
+</script>
+</body>
+</html>

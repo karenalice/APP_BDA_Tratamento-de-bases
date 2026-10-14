@@ -1259,8 +1259,33 @@ def build_zip_outputs(
     removed = adjustment["removed_share"].copy()
     write_csv(removed, p4 / "LINHAS_EXCLUIDAS_AJUSTE_SHARE.csv")
 
+    from share_reports import (
+        normalize_base_for_share,
+        calculate_share_matrix_and_layout,
+        write_pivot_sheet_to_writer,
+        write_adjusted_share_pdf,
+        period_span_label as get_share_period_span,
+    )
+
+    final_50 = adjustment["main_final"].copy()
+    period_short = period_label(final_50, columns["data_emissao"], include_year=False)
+
+    # Matriz no modelo consolidado (CONS, CORP, GOV com TARIFA e SHARE igual ao modelo GOL)
+    final_for_share = normalize_base_for_share(final_50)
+    final_tables = calculate_share_matrix_and_layout(final_for_share, filters=params.get("filters", {}))
+    final_period_title = get_share_period_span(final_for_share, filters=params.get("filters", {}))
+
     report_path = p4 / "RELATORIO_SHARE.xlsx"
     with pd.ExcelWriter(report_path, engine="xlsxwriter") as writer:
+        # Aba principal no modelo de dinâmica idêntico ao da GOL
+        write_pivot_sheet_to_writer(
+            writer,
+            "DINAMICA_SHARE",
+            final_tables,
+            final_period_title,
+            program_title="BDA LATAM — RELATÓRIO DE SHARE FINAL",
+        )
+
         s = adjustment["summary"]
         pd.DataFrame([
             ["Share LATAM original", s["original_share_jj"]],
@@ -1330,8 +1355,21 @@ def build_zip_outputs(
         filters=params.get("filters", {}),
     )
 
-    final_50 = adjustment["main_final"].copy()
-    period_short = period_label(final_50, columns["data_emissao"], include_year=False)
+    # PDF do cenário final no modelo executivo idêntico ao modelo da GOL
+    final_pdf_path = p4 / "RELATORIO_FINAL_SHARE.pdf"
+    write_adjusted_share_pdf(
+        final_pdf_path,
+        program_name="BDA LATAM",
+        tables=final_tables,
+        period_title=final_period_title,
+        filters_summary=params.get("filters", {}),
+        stats_summary={
+            "total_rows": len(final_50),
+            "total_tickets": int(final_50[columns["bilhete"]].nunique()) if columns.get("bilhete") in final_50 else 0,
+            "total_value": sum(t["summary_geral"]["total"] for t in final_tables if t.get("kind") == "CONS"),
+        }
+    )
+    shutil.copy2(final_pdf_path, out_dir / "RELATORIO_FINAL_SHARE.pdf")
 
     write_csv(final_50, p5 / "BASE FINAL 50 COLUNAS.csv")
     write_csv(

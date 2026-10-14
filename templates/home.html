@@ -35,6 +35,29 @@
             <span class="program-cta">Acessar programa <span aria-hidden="true">→</span></span>
         </a>
     </div>
+
+    <section class="home-intro" style="margin-top: 48px;">
+        <span class="eyebrow">RELATÓRIOS DIRETOS</span>
+        <h2>Gerar Relatório de Base Já Ajustada</h2>
+        <p>Se você já possui a base tratada e finalizada, leia o arquivo para gerar o PDF executivo e a planilha dinâmica imediatamente.</p>
+    </section>
+
+    <div class="program-grid">
+        <a class="program-card program-active" style="border-top-color: #0b78b7;" href="{{ url_for('relatorio_ajustado_latam') }}">
+            <span class="program-icon" style="background:#e8f4fc; color:#0b78b7;" aria-hidden="true">📄</span>
+            <span class="program-status" style="background:#e8f4fc; color:#0b78b7;">Relatório Rápido</span>
+            <strong>Relatório LATAM</strong>
+            <span class="program-description">Lê base ajustada final e gera o PDF de relatório executivo e o Excel dinâmico no modelo de share (CONS, CORP, GOV).</span>
+            <span class="program-cta" style="color:#0b78b7;">Gerar Relatório LATAM <span aria-hidden="true">→</span></span>
+        </a>
+        <a class="program-card program-active" style="border-top-color: #b25e00;" href="{{ url_for('relatorio_ajustado_gol') }}">
+            <span class="program-icon" style="background:#fff4e5; color:#b25e00;" aria-hidden="true">📊</span>
+            <span class="program-status" style="background:#fff4e5; color:#b25e00;">Com ADVP</span>
+            <strong>Relatório GOL</strong>
+            <span class="program-description">Lê base ajustada, pergunta se deseja exibir faixas de ADVP e gera o PDF de conferência e o Excel dinâmico consolidado.</span>
+            <span class="program-cta" style="color:#b25e00;">Gerar Relatório GOL <span aria-hidden="true">→</span></span>
+        </a>
+    </div>
 </main>
 </body>
 </html>
