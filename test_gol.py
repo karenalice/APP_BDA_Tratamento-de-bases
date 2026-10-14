@@ -389,6 +389,129 @@ class GolFlowTests(unittest.TestCase):
         res_zip = client.get(f"/relatorio-ajustado/latam/zip/{job_id}")
         self.assertEqual(res_zip.status_code, 200)
 
+    def test_adjusted_share_multi_base_and_duplicate_warning(self):
+        from share_reports import detect_duplicate_periods, build_multi_period_reports
+        import app as web
+
+        # 1. Teste unitário de detecção de duplicidades
+        df1 = pd.DataFrame({
+            "CIA_BILHETE": ["JJ", "G3"],
+            "VALOR_BRL": [1000.0, 800.0],
+            "BASE_VENDA": ["CGB", "CGB"],
+            "CUPOM": ["1", "1"],
+            "TIPO": ["N", "N"],
+            "DATA_EMISSAO": ["01/10/2026", "05/10/2026"],
+            "BILHETE": ["111111", "222222"],
+        })
+        df2 = pd.DataFrame({
+            "CIA_BILHETE": ["JJ", "AD"],
+            "VALOR_BRL": [1000.0, 500.0],
+            "BASE_VENDA": ["CGB", "CGB"],
+            "CUPOM": ["1", "1"],
+            "TIPO": ["N", "N"],
+            "DATA_EMISSAO": ["01/10/2026", "05/10/2026"],
+            "BILHETE": ["111111", "333333"],  # bilhete 111111 coincide com df1
+        })
+        bases_test = [
+            {"filename": "base_outubro_A.csv", "df": df1},
+            {"filename": "base_outubro_B.csv", "df": df2},
+        ]
+        multi_rep = build_multi_period_reports(bases_test)
+        self.assertEqual(len(multi_rep["periods"]), 3)
+        self.assertTrue(multi_rep["periods"][0]["is_complete"])
+        self.assertEqual(multi_rep["periods"][0]["title"], "RELATÓRIO COMPLETO — TODAS AS BASES REUNIDAS")
+        self.assertFalse(multi_rep["periods"][1]["is_complete"])
+        self.assertFalse(multi_rep["periods"][2]["is_complete"])
+
+        # Deve detectar período idêntico e bilhete sobreposto
+        warnings = multi_rep["duplicate_warnings"]
+        self.assertTrue(len(warnings) > 0)
+        self.assertEqual(warnings[0]["overlap_count"], 1)
+
+        # 2. Teste de fluxo Web com multi-base e modal estilizado
+        client = web.app.test_client()
+        csv1 = (
+            "CIA_BILHETE;VALOR_BRL;BASE_VENDA;CUPOM;TIPO;DATA_EMISSAO;BILHETE\n"
+            "JJ;1000,00;CGB;1;N;01/10/2026;9001\n"
+            "G3;800,00;CGB;1;N;02/10/2026;9002\n"
+        ).encode("utf-8")
+        csv2 = (
+            "CIA_BILHETE;VALOR_BRL;BASE_VENDA;CUPOM;TIPO;DATA_EMISSAO;BILHETE\n"
+            "JJ;1000,00;CGB;1;N;01/10/2026;9001\n"
+            "AD;600,00;CGB;1;N;03/10/2026;9003\n"
+        ).encode("utf-8")
+
+        data = {
+            "arquivos": [
+                (io.BytesIO(csv1), "base_periodo_1.csv"),
+                (io.BytesIO(csv2), "base_periodo_2.csv"),
+            ]
+        }
+        res_post = client.post("/relatorio-ajustado/latam/processar", data=data, content_type="multipart/form-data")
+        self.assertEqual(res_post.status_code, 302)
+        redirect_url = res_post.headers["Location"]
+        job_id = redirect_url.split("/")[-1]
+
+        # Verifica tela de visualização
+        res_view = client.get(redirect_url)
+        self.assertEqual(res_view.status_code, 200)
+        html = res_view.data.decode("utf-8")
+
+        # Verifica presença do pop-up modal estilizado (não alert do navegador)
+        self.assertIn("id=\"duplicateModal\"", html)
+        self.assertIn("modal-card-custom", html)
+        self.assertIn("Atenção: Duplicidade de Período Detectada", html)
+        self.assertIn("Proteção Anti-Duplicação Aplicada", html)
+
+        # Verifica tabela completa e tabelas individuais por período
+        self.assertIn("RELATÓRIO COMPLETO — TODAS AS BASES REUNIDAS", html)
+        self.assertIn("Tabelas Individuais por Período de Base", html)
+        self.assertIn("Bases Carregadas nesta Apuração", html)
+
+        # 3. Adicionar uma terceira base dinamicamente
+        csv3 = (
+            "CIA_BILHETE;VALOR_BRL;BASE_VENDA;CUPOM;TIPO;DATA_EMISSAO;BILHETE\n"
+            "JJ;500,00;CGB;1;N;15/11/2026;9004\n"
+        ).encode("utf-8")
+        res_add = client.post(f"/relatorio-ajustado/latam/adicionar/{job_id}", data={
+            "arquivos": [(io.BytesIO(csv3), "base_novembro.csv")]
+        }, content_type="multipart/form-data")
+        self.assertEqual(res_add.status_code, 302)
+
+        # Verifica se agora temos 3 bases
+        res_view2 = client.get(redirect_url)
+        self.assertEqual(res_view2.status_code, 200)
+        html2 = res_view2.data.decode("utf-8")
+        self.assertIn("base_novembro.csv", html2)
+        self.assertIn("Bases Carregadas nesta Apuração (3)", html2)
+
+        # 4. Remover uma base
+        res_del = client.get(f"/relatorio-ajustado/latam/remover-base/{job_id}/2")
+        self.assertEqual(res_del.status_code, 302)
+
+        res_view3 = client.get(redirect_url)
+        html3 = res_view3.data.decode("utf-8")
+        self.assertIn("Bases Carregadas nesta Apuração (2)", html3)
+
+        # 5. Downloads com multi-período
+        res_pdf = client.get(f"/relatorio-ajustado/latam/pdf/{job_id}")
+        self.assertEqual(res_pdf.status_code, 200)
+        self.assertEqual(res_pdf.mimetype, "application/pdf")
+
+        res_excel = client.get(f"/relatorio-ajustado/latam/excel/{job_id}")
+        self.assertEqual(res_excel.status_code, 200)
+        with io.BytesIO(res_excel.data) as excel_stream:
+            xl = pd.ExcelFile(excel_stream)
+            self.assertIn("COMPLETO", xl.sheet_names)
+            self.assertIn("PERIODO_1", xl.sheet_names)
+
+        res_zip = client.get(f"/relatorio-ajustado/latam/zip/{job_id}")
+        self.assertEqual(res_zip.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(res_zip.data)) as zf:
+            names = zf.namelist()
+            self.assertTrue(any("LATAM_RELATORIO_AJUSTADO.pdf" in n for n in names))
+            self.assertTrue(any("LATAM_RELATORIO_AJUSTADO.xlsx" in n for n in names))
+
 
 if __name__ == "__main__":
     unittest.main()

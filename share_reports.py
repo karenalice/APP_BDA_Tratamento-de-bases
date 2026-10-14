@@ -411,41 +411,204 @@ def write_pivot_sheet_to_writer(writer: pd.ExcelWriter,
     return ws
 
 
+def detect_duplicate_periods(bases: list[dict]) -> list[dict]:
+    """Detecta se há bases cobrindo o mesmo período de datas ou bilhetes coincidentes."""
+    warnings = []
+    for i in range(len(bases)):
+        for j in range(i + 1, len(bases)):
+            b1 = bases[i]
+            b2 = bases[j]
+
+            # Comparação de datas de emissão
+            s1, e1 = b1.get("date_start", ""), b1.get("date_end", "")
+            s2, e2 = b2.get("date_start", ""), b2.get("date_end", "")
+
+            same_period = (s1 == s2 and e1 == e2 and s1 != "")
+            dates_overlap = False
+            if s1 and s2 and e1 and e2:
+                dates_overlap = not (e1 < s2 or e2 < s1)
+
+            # Comparação de bilhetes
+            df1 = b1.get("df", pd.DataFrame())
+            df2 = b2.get("df", pd.DataFrame())
+            t1 = set(df1["BILHETE"].astype(str)) if "BILHETE" in df1.columns else set()
+            t2 = set(df2["BILHETE"].astype(str)) if "BILHETE" in df2.columns else set()
+            common_tickets = len(t1.intersection(t2))
+
+            if same_period or common_tickets > 0 or (dates_overlap and s1 == s2):
+                msg_period = b1.get("period_span") or f"{s1} a {e1}"
+                if same_period:
+                    msg = (
+                        f"As bases '{b1.get('filename')}' e '{b2.get('filename')}' cobrem exatamente o mesmo período "
+                        f"({msg_period}). Registros coincidentes foram unificados automaticamente no relatório completo."
+                    )
+                else:
+                    msg = (
+                        f"As bases '{b1.get('filename')}' e '{b2.get('filename')}' possuem sobreposição de datas "
+                        f"({b1.get('period_span')} - {b2.get('period_span')}) com {common_tickets} bilhetes coincidentes."
+                    )
+
+                warnings.append({
+                    "file_a": b1.get("filename", f"Base {i+1}"),
+                    "file_b": b2.get("filename", f"Base {j+1}"),
+                    "base1": b1.get("filename", f"Base {i+1}"),
+                    "base2": b2.get("filename", f"Base {j+1}"),
+                    "period_a": b1.get("period_span", ""),
+                    "period_b": b2.get("period_span", ""),
+                    "same_period": same_period,
+                    "common_tickets": common_tickets,
+                    "overlap_count": common_tickets,
+                    "message": msg,
+                })
+
+    return warnings
+
+
+def build_multi_period_reports(bases: list[dict],
+                               groups: dict | None = None,
+                               advp_kinds: set[str] | None = None,
+                               filters: dict | None = None) -> dict:
+    """Calcula os relatórios por período de base e o consolidado completo (juntando todas as bases)."""
+    if not bases:
+        return {"periods": [], "duplicate_warnings": [], "consolidated_df": pd.DataFrame()}
+
+    # Atualiza informações de datas e span para cada base
+    for b in bases:
+        df_b = b["df"]
+        dates = pd.to_datetime(df_b["DATA_EMISSAO"], errors="coerce", dayfirst=True).dropna()
+        b["date_start"] = dates.min().strftime("%Y-%m-%d") if not dates.empty else ""
+        b["date_end"] = dates.max().strftime("%Y-%m-%d") if not dates.empty else ""
+        b["period_span"] = period_span_label(df_b, filters)
+        b["total_rows"] = len(df_b)
+        b["total_tickets"] = int(df_b["BILHETE"].nunique()) if "BILHETE" in df_b.columns else len(df_b)
+
+    duplicate_warnings = detect_duplicate_periods(bases)
+
+    periods_output = []
+
+    # Se houver mais de uma base, gera primeiro a visão COMPLETA unificada (sem duplicidades)
+    if len(bases) > 1:
+        # Concatena e deduplica por bilhete + cupom + companhia
+        df_combined = pd.concat([b["df"] for b in bases], ignore_index=True)
+        dedup_subset = [c for c in ["BILHETE", "CUPOM", "CIA_BILHETE"] if c in df_combined.columns]
+        if dedup_subset:
+            df_consolidated = df_combined.drop_duplicates(subset=dedup_subset, keep="first").copy()
+        else:
+            df_consolidated = df_combined.drop_duplicates().copy()
+
+        comp_span = period_span_label(df_consolidated, filters)
+        comp_tables = calculate_share_matrix_and_layout(df_consolidated, groups=groups, advp_kinds=advp_kinds, filters=filters)
+        filtered_comp = filter_share_dataframe(df_consolidated, filters)
+        total_val_comp = sum(t["summary_geral"]["total"] for t in comp_tables if t.get("kind") == "CONS")
+        gap_comp = next((t["summary_geral"]["gap_pp"] for t in comp_tables if t.get("kind") == "CONS"), 0.0)
+
+        periods_output.append({
+            "id": "completo",
+            "is_complete": True,
+            "title": f"RELATÓRIO COMPLETO — TODAS AS BASES REUNIDAS",
+            "period_span": comp_span,
+            "filename": f"{len(bases)} bases reunidas",
+            "tables": comp_tables,
+            "stats": {
+                "total_rows": len(filtered_comp),
+                "total_tickets": int(filtered_comp["BILHETE"].nunique()) if "BILHETE" in filtered_comp else len(filtered_comp),
+                "total_value": total_val_comp,
+                "gap_pp": gap_comp,
+            },
+        })
+    else:
+        df_consolidated = bases[0]["df"].copy()
+
+    # Gera o relatório individual de cada período/base
+    for idx, b in enumerate(bases):
+        df_indiv = b["df"]
+        indiv_tables = calculate_share_matrix_and_layout(df_indiv, groups=groups, advp_kinds=advp_kinds, filters=filters)
+        filtered_indiv = filter_share_dataframe(df_indiv, filters)
+        total_val_indiv = sum(t["summary_geral"]["total"] for t in indiv_tables if t.get("kind") == "CONS")
+        gap_indiv = next((t["summary_geral"]["gap_pp"] for t in indiv_tables if t.get("kind") == "CONS"), 0.0)
+
+        periods_output.append({
+            "id": f"base_{idx}",
+            "is_complete": False,
+            "title": f"RELATÓRIO — {b['period_span']}",
+            "period_span": b["period_span"],
+            "filename": b.get("filename", f"Base {idx+1}"),
+            "tables": indiv_tables,
+            "stats": {
+                "total_rows": len(filtered_indiv),
+                "total_tickets": int(filtered_indiv["BILHETE"].nunique()) if "BILHETE" in filtered_indiv else len(filtered_indiv),
+                "total_value": total_val_indiv,
+                "gap_pp": gap_indiv,
+            },
+        })
+
+    return {
+        "periods": periods_output,
+        "duplicate_warnings": duplicate_warnings,
+        "consolidated_df": df_consolidated,
+    }
+
+
 def write_adjusted_share_excel(path: Path,
-                               tables: list[dict],
-                               period_title: str,
+                               tables_or_multi: list[dict] | dict,
+                               period_title: str = "",
                                program_title: str = "RELATÓRIO DE SHARE — BASE AJUSTADA",
                                df_data: pd.DataFrame | None = None,
                                footer_note: str = FOOTER_NOTE_DEFAULT) -> Path:
-    """Gera planilha Excel (.xlsx) com layout idêntico ao modelo da GOL."""
+    """Gera planilha Excel (.xlsx) com suporte a múltiplos períodos e layout idêntico ao modelo da GOL."""
     import xlsxwriter
 
-    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
-        write_pivot_sheet_to_writer(writer, "RELATORIO_SHARE", tables, period_title, program_title, footer_note)
+    # Verifica se recebeu estrutura multi-período
+    is_multi = isinstance(tables_or_multi, dict) and "periods" in tables_or_multi
 
-        # Aba opcional de dados
-        if df_data is not None and not df_data.empty:
-            sample_cols = [c for c in ["DATA_EMISSAO", "CIA_BILHETE", "BILHETE", "CUPOM", "TIPO", "VALOR_BRL", "BASE_VENDA"]
-                           if c in df_data.columns]
-            export_df = df_data[sample_cols].copy() if sample_cols else df_data.iloc[:, :15].copy()
-            export_df.to_excel(writer, sheet_name="DADOS_ANALISADOS", index=False)
+    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
+        if is_multi:
+            periods = tables_or_multi["periods"]
+            for idx, p in enumerate(periods):
+                if p.get("is_complete"):
+                    sheet_name = "COMPLETO"
+                else:
+                    sheet_name = f"PERIODO_{idx}" if len(periods) > 2 else f"PERIODO_{idx+1}"
+                write_pivot_sheet_to_writer(
+                    writer,
+                    sheet_name,
+                    p["tables"],
+                    p["period_span"],
+                    program_title=f"{program_title} — {p['title']}",
+                    footer_note=footer_note,
+                )
+            # Salva dados consolidados
+            df_to_save = tables_or_multi.get("consolidated_df") if df_data is None else df_data
+            if df_to_save is not None and not df_to_save.empty:
+                sample_cols = [c for c in ["DATA_EMISSAO", "CIA_BILHETE", "BILHETE", "CUPOM", "TIPO", "VALOR_BRL", "BASE_VENDA"]
+                               if c in df_to_save.columns]
+                export_df = df_to_save[sample_cols].copy() if sample_cols else df_to_save.iloc[:, :15].copy()
+                export_df.to_excel(writer, sheet_name="DADOS_CONSOLIDADOS", index=False)
+        else:
+            tables = tables_or_multi
+            write_pivot_sheet_to_writer(writer, "RELATORIO_SHARE", tables, period_title, program_title, footer_note)
+            if df_data is not None and not df_data.empty:
+                sample_cols = [c for c in ["DATA_EMISSAO", "CIA_BILHETE", "BILHETE", "CUPOM", "TIPO", "VALOR_BRL", "BASE_VENDA"]
+                               if c in df_data.columns]
+                export_df = df_data[sample_cols].copy() if sample_cols else df_data.iloc[:, :15].copy()
+                export_df.to_excel(writer, sheet_name="DADOS_ANALISADOS", index=False)
 
     return path
 
 
 def write_adjusted_share_pdf(path: Path,
                              program_name: str,
-                             tables: list[dict],
-                             period_title: str,
+                             tables_or_multi: list[dict] | dict,
+                             period_title: str = "",
                              filters_summary: dict | None = None,
                              stats_summary: dict | None = None,
                              footer_note: str = FOOTER_NOTE_DEFAULT) -> Path:
-    """Gera PDF de relatório executivo em formato paisagem (A4) idêntico ao modelo executivo."""
+    """Gera PDF de relatório executivo em formato paisagem (A4) com suporte a múltiplos períodos."""
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, PageBreak
 
     doc = SimpleDocTemplate(
         str(path),
@@ -476,6 +639,16 @@ def write_adjusted_share_pdf(path: Path,
         textColor=colors.HexColor("#486581"),
         spaceAfter=10,
     )
+    period_header_style = ParagraphStyle(
+        "PeriodHeading",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=16,
+        textColor=colors.HexColor("#0B78B7"),
+        spaceBefore=10,
+        spaceAfter=3,
+    )
     table_title_style = ParagraphStyle(
         "TableHeading",
         parent=styles["Heading2"],
@@ -483,7 +656,7 @@ def write_adjusted_share_pdf(path: Path,
         fontSize=11,
         leading=14,
         textColor=colors.HexColor("#102A43"),
-        spaceBefore=8,
+        spaceBefore=7,
         spaceAfter=4,
     )
     footer_style = ParagraphStyle(
@@ -499,88 +672,127 @@ def write_adjusted_share_pdf(path: Path,
     def money_str(val: float) -> str:
         return "R$ " + f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    is_multi = isinstance(tables_or_multi, dict) and "periods" in tables_or_multi
+    periods_list = tables_or_multi["periods"] if is_multi else [{
+        "title": f"{program_name} — Relatório de Share",
+        "period_span": period_title,
+        "tables": tables_or_multi,
+        "stats": stats_summary or {},
+    }]
+
     story = [
         Paragraph(f"{program_name} — Relatório de Share (Base Ajustada)", title_style),
-        Paragraph(f"<b>Período apurado:</b> {period_title}", subtitle_style),
     ]
 
-    # Caixa de resumo se houver estatísticas
-    if stats_summary:
-        meta_items = []
-        if "total_rows" in stats_summary:
-            meta_items.append(["Total de linhas:", f"{int(stats_summary['total_rows']):,}"])
-        if "total_tickets" in stats_summary:
-            meta_items.append(["Bilhetes únicos:", f"{int(stats_summary['total_tickets']):,}"])
-        if "total_value" in stats_summary:
-            meta_items.append(["Faturamento BRL:", money_str(stats_summary["total_value"])])
-        if filters_summary:
-            cupons_str = ", ".join(map(str, filters_summary.get("cupons", ["1"])))
-            tipos_str = ", ".join(map(str, filters_summary.get("tipos", ["N"])))
-            meta_items.append(["Filtros aplicados:", f"CUPOM {cupons_str} | TIPO {tipos_str}"])
+    # Se for multi-período, exibe resumo geral inicial
+    if is_multi:
+        duplicate_warnings = tables_or_multi.get("duplicate_warnings", [])
+        overview_text = f"<b>Bases apuradas:</b> {len(periods_list) - 1} período(s) analisado(s) individualmente e reunidos na visão completa."
+        story.append(Paragraph(overview_text, subtitle_style))
 
-        if meta_items:
-            m_table = Table(meta_items, colWidths=[38 * mm, 95 * mm], hAlign="LEFT")
-            m_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F0F4F8")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D9E2EC")),
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        if duplicate_warnings:
+            warn_items = [["⚠️ ATENÇÃO: SOBREPOSIÇÃO OU DUPLICIDADE DE PERÍODO IDENTIFICADA"]]
+            for w in duplicate_warnings:
+                warn_items.append([w["message"]])
+            w_table = Table(warn_items, colWidths=[269 * mm])
+            w_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF7ED")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#FDBA74")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#9A3412")),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ]))
-            story.append(m_table)
+            story.append(w_table)
             story.append(Spacer(1, 4 * mm))
 
-    # Construção das tabelas
-    for table in tables:
-        heading_row_0 = ["CIA_BILHETE"]
-        heading_row_1 = [""]
-        for band in table["bands"]:
-            heading_row_0.extend([band["label"], ""])
-            heading_row_1.extend(["TARIFA", "SHARE"])
+    # Loop para renderizar cada período
+    for p_idx, p in enumerate(periods_list):
+        if p_idx > 0:
+            story.append(PageBreak())
 
-        table_data = [heading_row_0, heading_row_1]
+        sec_title = p["title"]
+        story.append(Paragraph(sec_title, period_header_style))
+        story.append(Paragraph(f"<b>Período apurado:</b> {p['period_span']}", subtitle_style))
 
-        for r in table["rows"]:
-            row_vals = [r["cia"]]
-            for cell in r["cells"]:
-                row_vals.append(money_str(cell["value"]))
-                row_vals.append(f"{cell['share'] * 100:.2f}%".replace(".", ","))
-            table_data.append(row_vals)
+        st = p.get("stats", {})
+        if st:
+            meta_items = []
+            if "total_rows" in st:
+                meta_items.append(["Total de linhas:", f"{int(st['total_rows']):,}"])
+            if "total_tickets" in st:
+                meta_items.append(["Bilhetes únicos:", f"{int(st['total_tickets']):,}"])
+            if "total_value" in st:
+                meta_items.append(["Faturamento BRL:", money_str(st["total_value"])])
+            if filters_summary:
+                cupons_str = ", ".join(map(str, filters_summary.get("cupons", ["1"])))
+                tipos_str = ", ".join(map(str, filters_summary.get("tipos", ["N"])))
+                meta_items.append(["Filtros aplicados:", f"CUPOM {cupons_str} | TIPO {tipos_str}"])
 
-        available_w = 269 * mm
-        num_cols = len(heading_row_0)
-        first_w = 40 * mm
-        other_w = (available_w - first_w) / (num_cols - 1)
-        col_widths = [first_w] + [other_w] * (num_cols - 1)
+            if meta_items:
+                m_table = Table(meta_items, colWidths=[38 * mm, 95 * mm], hAlign="LEFT")
+                m_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F0F4F8")),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D9E2EC")),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]))
+                story.append(m_table)
+                story.append(Spacer(1, 3 * mm))
 
-        t = Table(table_data, colWidths=col_widths, repeatRows=2)
-        style_cmds = [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DCE6F1")),
-            ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#F1F2EE")),
-            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E5ECF2")),
-            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9AABBC")),
-            ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-            ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-            ("ALIGN", (0, 0), (-1, 1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-            ("SPAN", (0, 0), (0, 1)),
-        ]
-        # Mesclar as colunas dos blocos superiores
-        for b_idx in range(len(table["bands"])):
-            c_start = 1 + b_idx * 2
-            style_cmds.append(("SPAN", (c_start, 0), (c_start + 1, 0)))
+        # Tabelas CONS, CORP, GOV
+        for table in p["tables"]:
+            heading_row_0 = ["CIA_BILHETE"]
+            heading_row_1 = [""]
+            for band in table["bands"]:
+                heading_row_0.extend([band["label"], ""])
+                heading_row_1.extend(["TARIFA", "SHARE"])
 
-        t.setStyle(TableStyle(style_cmds))
-        story.append(KeepTogether([Paragraph(table["title"], table_title_style), t]))
-        story.append(Spacer(1, 4 * mm))
+            table_data = [heading_row_0, heading_row_1]
 
-    story.append(Paragraph(footer_note, footer_style))
+            for r in table["rows"]:
+                row_vals = [r["cia"]]
+                for cell in r["cells"]:
+                    row_vals.append(money_str(cell["value"]))
+                    row_vals.append(f"{cell['share'] * 100:.2f}%".replace(".", ","))
+                table_data.append(row_vals)
+
+            available_w = 269 * mm
+            num_cols = len(heading_row_0)
+            first_w = 40 * mm
+            other_w = (available_w - first_w) / (num_cols - 1)
+            col_widths = [first_w] + [other_w] * (num_cols - 1)
+
+            t = Table(table_data, colWidths=col_widths, repeatRows=2)
+            style_cmds = [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DCE6F1")),
+                ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#F1F2EE")),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E5ECF2")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9AABBC")),
+                ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (-1, 1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("SPAN", (0, 0), (0, 1)),
+            ]
+            for b_idx in range(len(table["bands"])):
+                c_start = 1 + b_idx * 2
+                style_cmds.append(("SPAN", (c_start, 0), (c_start + 1, 0)))
+
+            t.setStyle(TableStyle(style_cmds))
+            story.append(KeepTogether([Paragraph(table["title"], table_title_style), t]))
+            story.append(Spacer(1, 3 * mm))
+
+        story.append(Paragraph(footer_note, footer_style))
+
     doc.build(story)
     return path
