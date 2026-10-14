@@ -5,8 +5,13 @@ import re
 import string
 import unicodedata
 from pathlib import Path
-import tkinter as tk
-from tkinter import filedialog, messagebox
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+except (ImportError, ModuleNotFoundError):
+    tk = None
+    filedialog = None
+    messagebox = None
 
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
@@ -759,6 +764,8 @@ def selecionar_e_processar():
 
 
 def criar_interface():
+    if tk is None:
+        raise RuntimeError("Interface gráfica Tkinter não está disponível neste ambiente.")
     janela = tk.Tk()
     janela.title(f"Tratador de Tabelas - versão {VERSAO_PROGRAMA}")
     janela.geometry("600x300")
