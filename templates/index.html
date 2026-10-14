@@ -401,7 +401,7 @@
                 </div>
             </div>
 
-            <button class="btn primary large" type="submit">Processar e gerar ZIP</button>
+            <button class="btn primary large" type="submit" id="btnProcessar">Processar e gerar ZIP</button>
         </form>
     </section>
     {% endif %}
@@ -415,6 +415,7 @@
                 <p>O ZIP inclui, na pasta principal, o PDF e o TXT com o share atual e a auditoria completa da formatação.</p>
             </div>
         </div>
+        {% if result.original_share_jj is defined and result.original_share_jj is not none %}
         <div class="share-grid">
             <div class="metric"><label>LATAM original</label><strong>{{ "%.2f"|format(result.original_share_jj * 100) }}%</strong></div>
             <div class="metric highlight"><label>LATAM final</label><strong>{{ "%.2f"|format(result.final_share_jj * 100) }}%</strong></div>
@@ -425,8 +426,9 @@
             <div><b>Meta LATAM:</b> {{ "%.2f"|format(result.target_share * 100) }}%</div>
             <div><b>Bilhetes retirados:</b> {{ result.removed_tickets }}</div>
             <div><b>Linhas/cupons retirados:</b> {{ result.removed_rows }}</div>
-            <div><b>Valor físico retirado:</b> R$ {{ "{:,.2f}".format(result.removed_value_physical).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+            <div><b>Valor físico retirado:</b> R$ {{ "{:,.2f}".format(result.removed_value_physical or 0).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
         </div>
+        {% endif %}
         <a href="{{ url_for('download', job_id=job_id) }}" class="btn download">Baixar todos os arquivos (.zip)</a>
     </section>
     {% endif %}
@@ -504,6 +506,19 @@ if (filterForm) filterForm.addEventListener('submit', event => {
         empty.querySelector('input[type="checkbox"]').focus();
     } else document.getElementById('filter-error').textContent = '';
 });
+
+const rulesForm = document.querySelector('.rules-form');
+if (rulesForm) {
+    rulesForm.addEventListener('submit', function() {
+        const btn = document.getElementById('btnProcessar');
+        if (btn && !btn.dataset.submitted) {
+            btn.dataset.submitted = 'true';
+            btn.textContent = 'Processando base e gerando ZIP... Aguarde...';
+            btn.style.pointerEvents = 'none';
+            btn.style.opacity = '0.75';
+        }
+    });
+}
 
 function toggle(selector, show) {
     document.querySelectorAll(selector).forEach(el => el.classList.toggle("active", show));

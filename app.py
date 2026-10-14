@@ -4,6 +4,7 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 import uuid
 import json
+import pickle
 import shutil
 import pandas as pd
 import re
@@ -26,6 +27,8 @@ from processor import (
     build_zip_outputs,
 )
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 BASE_DIR = Path(__file__).resolve().parent
 JOBS_DIR = BASE_DIR / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
@@ -33,6 +36,7 @@ JOBS_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.secret_key = "troque-esta-chave-em-producao"
 app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 
 def load_job(job_id):
@@ -100,8 +104,10 @@ def gol():
     return gol_page()
 
 
-@app.post("/gol/formatar")
+@app.route("/gol/formatar", methods=["GET", "POST"])
 def gol_formatar():
+    if request.method == "GET":
+        return redirect(url_for("gol"))
     original = request.files.get("arquivo")
     if not original or not original.filename:
         flash("Envie a base GOL.")
@@ -128,12 +134,16 @@ def gol_formatar():
         return redirect(url_for("gol"))
 
 
-@app.post("/gol/relatorios/<job_id>")
+@app.route("/gol/relatorios/<job_id>", methods=["GET", "POST"])
 def gol_relatorios(job_id):
     job_dir, meta = load_job(job_id)
     if not job_dir or not (job_dir / "formatted.pkl").exists():
         flash("Sessão GOL não encontrada.")
         return redirect(url_for("gol"))
+    if request.method == "GET":
+        if (job_dir / "full.pkl").exists():
+            return gol_results_page(job_id, job_dir, meta)
+        return gol_page(job_id, 2, meta["stats"], week=meta["week"], corp_text=meta["corp_text"])
     try:
         current = pd.read_pickle(job_dir / "formatted.pkl")
         current["_SOURCE_PERIOD"] = "ORIGINAL"
@@ -196,12 +206,14 @@ def gol_relatorios(job_id):
         return gol_page(job_id, 2, meta["stats"], week=meta["week"], corp_text=meta["corp_text"])
 
 
-@app.post("/gol/filtros/<job_id>")
+@app.route("/gol/filtros/<job_id>", methods=["GET", "POST"])
 def gol_filtros(job_id):
     job_dir, meta = load_job(job_id)
     if not job_dir or not (job_dir / "full.pkl").exists():
         flash("Prepare a base GOL primeiro.")
         return redirect(url_for("gol"))
+    if request.method == "GET":
+        return gol_results_page(job_id, job_dir, meta)
     try:
         options = gol_filter_options(pd.read_pickle(job_dir / "full.pkl"))
         selected = {}
@@ -230,12 +242,29 @@ def gol_filtros(job_id):
     return gol_results_page(job_id, job_dir, meta)
 
 
-@app.post("/gol/exportar/<job_id>")
+@app.route("/gol/exportar/<job_id>", methods=["GET", "POST"])
 def gol_exportar(job_id):
     job_dir, meta = load_job(job_id)
     if not job_dir or not (job_dir / "full.pkl").exists():
         flash("Prepare os relatórios GOL primeiro.")
         return redirect(url_for("gol"))
+    if request.method == "GET":
+        zip_path = job_dir / "GOL_RESULTADO.zip"
+        cache_path = job_dir / "gol_export_cache.pkl"
+        if zip_path.exists() and cache_path.exists():
+            try:
+                with open(cache_path, "rb") as f:
+                    cached = pickle.load(f)
+                return gol_results_page(job_id, job_dir, meta, step=4,
+                                        matrix=cached.get("matrix"),
+                                        result=cached.get("result"),
+                                        daily_tables=cached.get("daily_tables"))
+            except Exception:
+                pass
+        if zip_path.exists():
+            return gol_results_page(job_id, job_dir, meta, step=4,
+                                    result={"zip_name": zip_path.name, "warnings": [], "removed": 0, "final": 0})
+        return gol_results_page(job_id, job_dir, meta, step=3)
     try:
         groups = {k: tuple(v) for k, v in meta.get("groups", {}).items()}
         advp_kinds = set(meta.get("advp_kinds", []))
@@ -286,16 +315,22 @@ def gol_exportar(job_id):
             job_dir / meta["complementar_name"] if has_complement else None,
             job_dir / meta["origem_datas_name"] if meta.get("origem_datas_name") else None)
         daily_tables = daily_comparison_tables(full, final, week, groups, advp_kinds, filters)
+        res_data = {"removed": len(removed), "final": len(final),
+                    "zip_name": zip_path.name, "warnings": warnings}
+        try:
+            with open(job_dir / "gol_export_cache.pkl", "wb") as f:
+                pickle.dump({"result": res_data, "matrix": after, "daily_tables": daily_tables}, f)
+        except Exception:
+            pass
         return gol_results_page(job_id, job_dir, meta, step=4, matrix=after,
-                                result={"removed": len(removed), "final": len(final),
-                                        "zip_name": zip_path.name, "warnings": warnings},
+                                result=res_data,
                                 daily_tables=daily_tables)
     except Exception as exc:
         flash(f"Erro no ajuste GOL: {exc}")
         return gol_results_page(job_id, job_dir, meta)
 
 
-@app.get("/gol/download/<job_id>")
+@app.route("/gol/download/<job_id>", methods=["GET", "POST"])
 def gol_download(job_id):
     job_dir, _ = load_job(job_id)
     if not job_dir or not (job_dir / "GOL_RESULTADO.zip").exists():
@@ -318,8 +353,10 @@ def latam():
     )
 
 
-@app.post("/analisar")
+@app.route("/analisar", methods=["GET", "POST"])
 def analisar():
+    if request.method == "GET":
+        return redirect(url_for("latam"))
     f = request.files.get("arquivo")
     if not f or not f.filename:
         flash("Selecione um arquivo CSV.")
@@ -403,10 +440,10 @@ def analisar():
         return redirect(url_for("latam"))
 
 
-@app.post("/filtros/<job_id>")
+@app.route("/filtros/<job_id>", methods=["GET", "POST"])
 def filtros(job_id):
     job_dir, meta = load_job(job_id)
-    if not job_dir:
+    if not job_dir or not (job_dir / "main_after_west.pkl").exists():
         flash("Sessão não encontrada. Envie o arquivo novamente.")
         return redirect(url_for("latam"))
 
@@ -414,27 +451,30 @@ def filtros(job_id):
     columns = meta["columns"]
     options = get_filter_options(main_df, columns)
 
-    selected = {
-        "cupons": request.form.getlist("cupons"),
-        "tipos": request.form.getlist("tipos"),
-        "consolidadas": request.form.getlist("consolidadas"),
-        "date_start": request.form.get("date_start", "").strip(),
-        "date_end": request.form.get("date_end", "").strip(),
-    }
-
-    # Se o usuário não selecionou nada em um multi-select,
-    # interpreta como "todos".
-    if not selected["cupons"]:
-        selected["cupons"] = options["cupons"]
-    if not selected["tipos"]:
-        selected["tipos"] = options["tipos"]
-    if not selected["consolidadas"]:
-        selected["consolidadas"] = options["consolidadas"]
-
-    (job_dir / "filters.json").write_text(
-        json.dumps(selected, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if request.method == "POST":
+        selected = {
+            "cupons": request.form.getlist("cupons"),
+            "tipos": request.form.getlist("tipos"),
+            "consolidadas": request.form.getlist("consolidadas"),
+            "date_start": request.form.get("date_start", "").strip(),
+            "date_end": request.form.get("date_end", "").strip(),
+        }
+        if not selected["cupons"]:
+            selected["cupons"] = options["cupons"]
+        if not selected["tipos"]:
+            selected["tipos"] = options["tipos"]
+        if not selected["consolidadas"]:
+            selected["consolidadas"] = options["consolidadas"]
+        (job_dir / "filters.json").write_text(
+            json.dumps(selected, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        filters_file = job_dir / "filters.json"
+        selected = json.loads(filters_file.read_text(encoding="utf-8")) if filters_file.exists() else {
+            "cupons": options["cupons"], "tipos": options["tipos"],
+            "consolidadas": options["consolidadas"], "date_start": "", "date_end": ""
+        }
 
     filtered = apply_user_filters(main_df, columns, selected)
     preview = build_share_preview(filtered, columns)
@@ -453,12 +493,57 @@ def filtros(job_id):
     )
 
 
-@app.post("/processar/<job_id>")
+@app.route("/processar/<job_id>", methods=["GET", "POST"])
 def processar(job_id):
     job_dir, meta = load_job(job_id)
     if not job_dir:
         flash("Sessão de processamento não encontrada.")
         return redirect(url_for("latam"))
+
+    if request.method == "GET":
+        zip_candidates = sorted(job_dir.glob("*.zip"))
+        if zip_candidates and (job_dir / "main_after_west.pkl").exists():
+            main_df = pd.read_pickle(job_dir / "main_after_west.pkl")
+            columns = meta["columns"]
+            filters_file = job_dir / "filters.json"
+            filters = json.loads(filters_file.read_text(encoding="utf-8")) if filters_file.exists() else {}
+            options = get_filter_options(main_df, columns)
+            filtered = apply_user_filters(main_df, columns, filters)
+            preview = build_share_preview(filtered, columns)
+            table_rows = filtered.head(300).fillna("").to_dict("records")
+
+            summary_file = job_dir / "result_summary.json"
+            result_data = None
+            if summary_file.exists():
+                try:
+                    result_data = json.loads(summary_file.read_text(encoding="utf-8"))
+                except Exception:
+                    result_data = None
+            if not result_data:
+                result_data = {
+                    "zip_name": zip_candidates[-1].name,
+                    "original_share_jj": preview["jj"],
+                    "final_share_jj": preview["jj"],
+                    "final_share_g3": preview["g3"],
+                    "final_share_ad": preview["ad"],
+                    "target_share": preview["jj"],
+                    "removed_tickets": 0,
+                    "removed_rows": 0,
+                    "removed_value_physical": 0.0,
+                }
+
+            return render_template(
+                "index.html",
+                preview=preview,
+                result=result_data,
+                table_rows=table_rows,
+                table_columns=preview["display_columns"],
+                filter_options=options,
+                current_filters=filters,
+                job_id=job_id,
+                stage1_stats=meta.get("stage1_stats", {}),
+            )
+        return redirect(url_for("filtros", job_id=job_id))
 
     try:
         main_df = pd.read_pickle(job_dir / "main_after_west.pkl")
@@ -545,6 +630,13 @@ def processar(job_id):
 
         result_summary = result["summary"].copy()
         result_summary["zip_name"] = zip_path.name
+        try:
+            (job_dir / "result_summary.json").write_text(
+                json.dumps(result_summary, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
         return render_template(
             "index.html",
@@ -563,7 +655,7 @@ def processar(job_id):
         return redirect(url_for("latam"))
 
 
-@app.get("/download/<job_id>")
+@app.route("/download/<job_id>", methods=["GET", "POST"])
 def download(job_id):
     job_dir, _ = load_job(job_id)
     if not job_dir:

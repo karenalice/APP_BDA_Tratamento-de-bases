@@ -158,7 +158,7 @@
   {% if kind in advp_kinds %}{% for name in groups %}<label>Share GOL no ADVP {{ name }} ({{ 'completo' if has_complement else 'semana' }}) (%)<input name="{{ kind }}_{{ name }}" type="text" inputmode="decimal" placeholder="Opcional"></label>{% endfor %}{% endif %}
   </div></fieldset>{% endfor %}
 <p class="filter-help">O ajuste busca atingir as metas de share da GOL, preserva a LATAM em média com no mínimo 3 pontos percentuais à frente da GOL e limita a queda do share AZUL a 2 pontos percentuais. Se ao estipular o ADVP curto a meta do share geral não for alcançada, o ADVP longo também é ajustado.</p>
-<button class="btn primary" type="submit">Ajustar e gerar ZIP</button></form></section>
+<button class="btn primary" type="submit" id="btnGolExportar">Ajustar e gerar ZIP</button></form></section>
 {% endif %}
 {% if step == 4 %}<section class="card success-card"><h2>ZIP GOL pronto</h2><p>{{ result.removed }} linhas excluídas no ajuste. Base final com {{ result.final }} linhas.</p>
 <div class="filter-legend-box" style="margin: 14px 0;">
@@ -172,4 +172,18 @@
   </div>
 </div>
 {% for warning in result.warnings %}<div class="alert">{{ warning }}</div>{% endfor %}<a class="btn primary" href="{{ url_for('gol_download', job_id=job_id) }}">Baixar {{ result.zip_name }}</a></section>{% endif %}
-</main></body></html>
+</main>
+<script>
+document.querySelectorAll('form').forEach(f => {
+  f.addEventListener('submit', () => {
+    const btn = f.querySelector('button[type="submit"]');
+    if (btn && !btn.dataset.submitted) {
+      btn.dataset.submitted = 'true';
+      btn.textContent = 'Processando... Aguarde...';
+      btn.style.pointerEvents = 'none';
+      btn.style.opacity = '0.75';
+    }
+  });
+});
+</script>
+</body></html>
